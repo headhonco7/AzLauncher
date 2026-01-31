@@ -2,6 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.azka.launcher">
 
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <!-- Android TV / Leanback -->
     <uses-feature
         android:name="android.software.leanback"
