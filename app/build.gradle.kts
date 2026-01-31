@@ -4,11 +4,14 @@ plugins {
 }
 
 android {
-    namespace = "azka"
+    // Namespace boleh sama dengan applicationId atau boleh beda.
+    // Untuk minim error dan konsisten, kita samakan.
+    namespace = "com.azka.launcher"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "azka"
+        // Wajib ada minimal satu titik
+        applicationId = "com.azka.launcher"
         minSdk = 24
         targetSdk = 34
         versionCode = 1
@@ -33,7 +36,6 @@ android {
     }
 
     composeOptions {
-        // Cocok untuk Kotlin 1.9.22
         kotlinCompilerExtensionVersion = "1.5.8"
     }
 
@@ -49,7 +51,6 @@ android {
 }
 
 dependencies {
-    // Compose BOM biar versi dependency konsisten
     implementation(platform("androidx.compose:compose-bom:2024.02.00"))
 
     implementation("androidx.activity:activity-compose:1.8.2")
