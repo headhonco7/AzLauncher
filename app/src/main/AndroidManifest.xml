@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.azka.launcher">
 
     <!-- Android TV / Leanback -->
     <uses-feature
@@ -13,7 +14,7 @@
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
 
         <activity
-            android:name=".MainActivity"
+            android:name="com.azka.launcher.MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
             android:taskAffinity="">
