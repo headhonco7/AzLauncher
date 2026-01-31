@@ -1,4 +1,4 @@
-package azka.ui
+package com.azka.launcher.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -10,7 +10,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -286,7 +287,6 @@ fun HomeScreen() {
 
 @Composable
 private fun AppTile(label: String) {
-    // Tahap 1: tile fokusable sederhana (DPAD aman)
     Box(
         modifier = Modifier
             .size(width = 220.dp, height = 84.dp)
