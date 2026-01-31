@@ -12,9 +12,7 @@ class ConfigRepository(
     private val context: Context
 ) {
     companion object {
-        // Nanti URL ini kita pindah jadi bisa diubah via AdminScreen (Tahap 5).
-        // Untuk sekarang: aman default "belum".
-        const val DEFAULT_CONFIG_URL = "https://example.com/config.json"
+        const val DEFAULT_CONFIG_URL = "https://raw.githubusercontent.com/headhonco7/azlauncher-content/main/config.json"
 
         private const val CACHE_FILE_NAME = "azlauncher_config_cache.json"
         private const val CONNECT_TIMEOUT_MS = 8000
@@ -65,8 +63,7 @@ class ConfigRepository(
             throw RuntimeException("HTTP $code")
         }
 
-        val stream = conn.inputStream
-        return stream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+        return conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
     }
 
     /**
