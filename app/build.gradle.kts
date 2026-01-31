@@ -4,13 +4,10 @@ plugins {
 }
 
 android {
-    // Namespace boleh sama dengan applicationId atau boleh beda.
-    // Untuk minim error dan konsisten, kita samakan.
     namespace = "com.azka.launcher"
     compileSdk = 34
 
     defaultConfig {
-        // Wajib ada minimal satu titik
         applicationId = "com.azka.launcher"
         minSdk = 24
         targetSdk = 34
@@ -37,6 +34,12 @@ android {
 
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.8"
+    }
+
+    // ✅ Samakan Java & Kotlin ke 17
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
 
     kotlinOptions {
