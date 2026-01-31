@@ -1,4 +1,4 @@
-package azka
+package com.azka.launcher
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
