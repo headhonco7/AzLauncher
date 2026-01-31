@@ -1,4 +1,4 @@
-package azka.ui.theme
+package com.azka.launcher.ui.theme
 
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
