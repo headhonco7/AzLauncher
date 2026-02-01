@@ -33,10 +33,10 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Tahap 3:
- * - Load gambar: wallpaper + logo + hero banner (slideshow ringan).
- * - Tetap pakai cache config, fetch remote, simpan cache.
- * - QR & launch app belum (nanti tahap berikut).
+ * Tahap 3.2:
+ * - AppsRow tile bisa menampilkan iconUrl dari config.
+ * - Fallback aman: kalau iconUrl kosong, tampilkan label.
+ * - Belum klik launch app & QR (tahap berikut).
  */
 @Composable
 fun HomeScreen() {
@@ -79,7 +79,7 @@ fun HomeScreen() {
         }
     }
 
-    // Slideshow hero (auto) — ringan, tidak mengganggu compile/CI
+    // Slideshow hero (auto) — ringan
     LaunchedEffect(config.hero.enabled, config.hero.autoSlide, config.hero.intervalMs, heroItems.size) {
         heroIndex = 0
         if (!config.hero.enabled) return@LaunchedEffect
@@ -127,7 +127,6 @@ fun HomeScreen() {
                         )
                 )
             } else {
-                // fallback warna kalau belum ada wallpaper URL
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -256,7 +255,6 @@ fun HomeScreen() {
                                     modifier = Modifier.fillMaxSize(),
                                     contentScale = ContentScale.Crop
                                 )
-                                // overlay tipis agar teks tetap kebaca kalau nanti ditambah
                                 Box(
                                     modifier = Modifier
                                         .fillMaxSize()
@@ -413,7 +411,10 @@ fun HomeScreen() {
                         contentPadding = PaddingValues(horizontal = 2.dp)
                     ) {
                         items(items) { item ->
-                            AppTile(label = item.label)
+                            AppTile(
+                                label = item.label,
+                                iconUrl = item.iconUrl
+                            )
                         }
                     }
                 }
@@ -457,7 +458,10 @@ fun HomeScreen() {
 }
 
 @Composable
-private fun AppTile(label: String) {
+private fun AppTile(
+    label: String,
+    iconUrl: String?
+) {
     Box(
         modifier = Modifier
             .size(width = 220.dp, height = 84.dp)
@@ -465,16 +469,40 @@ private fun AppTile(label: String) {
             .background(Color(0x551F2630))
             .border(1.dp, Color(0x552A3442), RoundedCornerShape(16.dp))
             .focusable()
-            .padding(14.dp),
-        contentAlignment = Alignment.Center
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        contentAlignment = Alignment.CenterStart
     ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.titleMedium,
-            color = Color(0xFFD7E3F4),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
+        Row(
+            modifier = Modifier.fillMaxSize(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (!iconUrl.isNullOrBlank()) {
+                Box(
+                    modifier = Modifier
+                        .size(52.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0x33000000))
+                        .border(1.dp, Color(0x332A3442), RoundedCornerShape(12.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    AsyncImage(
+                        model = iconUrl,
+                        contentDescription = "$label icon",
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Fit
+                    )
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+            }
+
+            Text(
+                text = label,
+                style = MaterialTheme.typography.titleMedium,
+                color = Color(0xFFD7E3F4),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
     }
 }
 
