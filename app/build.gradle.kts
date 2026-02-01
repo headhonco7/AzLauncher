@@ -36,7 +36,6 @@ android {
         kotlinCompilerExtensionVersion = "1.5.8"
     }
 
-    // ✅ Samakan Java & Kotlin ke 17
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -54,7 +53,6 @@ android {
 }
 
 dependencies {
-    // Compose BOM biar versi dependency konsisten
     implementation(platform("androidx.compose:compose-bom:2024.02.00"))
 
     implementation("androidx.activity:activity-compose:1.8.2")
@@ -63,8 +61,11 @@ dependencies {
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
 
-    // ✅ Image loader (logo/wallpaper/banner)
+    // Image loader (logo/wallpaper/banner/icons)
     implementation("io.coil-kt:coil-compose:2.6.0")
+
+    // ✅ QR generator
+    implementation("com.google.zxing:core:3.5.3")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
