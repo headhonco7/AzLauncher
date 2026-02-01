@@ -12,15 +12,26 @@ class ConfigRepository(
     private val context: Context
 ) {
     companion object {
-        const val DEFAULT_CONFIG_URL = "https://raw.githubusercontent.com/headhonco7/azlauncher-content/main/config.json"
+        /**
+         * RAW URL config.json dari repo konten.
+         */
+        const val DEFAULT_CONFIG_URL = "https://raw.githubusercontent.com/REPLACE_ME/azlauncher-content/main/config.json"
 
         private const val CACHE_FILE_NAME = "azlauncher_config_cache.json"
+        private const val META_FILE_NAME = "azlauncher_config_meta.txt"
+
         private const val CONNECT_TIMEOUT_MS = 8000
         private const val READ_TIMEOUT_MS = 12000
     }
 
-    private val cacheFile: File
-        get() = File(context.filesDir, CACHE_FILE_NAME)
+    private val cacheFile: File get() = File(context.filesDir, CACHE_FILE_NAME)
+    private val metaFile: File get() = File(context.filesDir, META_FILE_NAME)
+
+    data class FetchResult(
+        val updated: Boolean,
+        val config: RemoteConfig?,
+        val rawJson: String?
+    )
 
     fun loadCachedConfigOrNull(): RemoteConfig? {
         return try {
@@ -41,13 +52,66 @@ class ConfigRepository(
     }
 
     /**
-     * Fetch remote JSON. Return Pair(config, rawJson) jika sukses.
+     * Simpan meta string (ETag / Last-Modified) supaya fetch berikutnya bisa conditional.
+     */
+    private fun saveMeta(meta: String) {
+        try {
+            metaFile.writeText(meta, Charsets.UTF_8)
+        } catch (_: Throwable) {
+            // ignore
+        }
+    }
+
+    private fun loadMetaOrNull(): String? {
+        return try {
+            if (!metaFile.exists()) return null
+            metaFile.readText(Charsets.UTF_8).trim().ifBlank { null }
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    /**
+     * Fetch remote config dengan conditional request.
+     * - Kalau server jawab 304: updated=false
+     * - Kalau 200: parse + updated=true
+     */
+    fun fetchRemoteConfigIfChanged(configUrl: String): FetchResult {
+        val meta = loadMetaOrNull()
+        val res = httpGetConditional(configUrl, meta)
+
+        if (res.code == 304) {
+            return FetchResult(updated = false, config = null, rawJson = null)
+        }
+
+        if (res.code !in 200..299 || res.body == null) {
+            throw RuntimeException("HTTP ${res.code}")
+        }
+
+        val cfg = parseConfig(res.body)
+        // simpan cache + meta baru
+        saveCache(res.body)
+        val newMeta = res.etag ?: res.lastModified
+        if (!newMeta.isNullOrBlank()) saveMeta(newMeta)
+
+        return FetchResult(updated = true, config = cfg, rawJson = res.body)
+    }
+
+    /**
+     * API lama tetap dipakai untuk refresh manual.
      */
     fun fetchRemoteConfig(configUrl: String): Pair<RemoteConfig, String> {
         val raw = httpGet(configUrl)
         val cfg = parseConfig(raw)
         return cfg to raw
     }
+
+    private data class HttpRes(
+        val code: Int,
+        val body: String?,
+        val etag: String?,
+        val lastModified: String?
+    )
 
     private fun httpGet(url: String): String {
         val conn = (URL(url).openConnection() as HttpURLConnection)
@@ -59,11 +123,48 @@ class ConfigRepository(
         conn.connect()
 
         val code = conn.responseCode
-        if (code !in 200..299) {
-            throw RuntimeException("HTTP $code")
-        }
+        if (code !in 200..299) throw RuntimeException("HTTP $code")
+
+        // simpan meta juga (untuk fetch berikutnya)
+        val etag = conn.getHeaderField("ETag")
+        val lastMod = conn.getHeaderField("Last-Modified")
+        val meta = etag ?: lastMod
+        if (!meta.isNullOrBlank()) saveMeta(meta)
 
         return conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+    }
+
+    private fun httpGetConditional(url: String, meta: String?): HttpRes {
+        val conn = (URL(url).openConnection() as HttpURLConnection)
+        conn.requestMethod = "GET"
+        conn.instanceFollowRedirects = true
+        conn.connectTimeout = CONNECT_TIMEOUT_MS
+        conn.readTimeout = READ_TIMEOUT_MS
+        conn.setRequestProperty("Accept", "application/json")
+
+        // meta bisa ETag atau Last-Modified. Kita coba keduanya sebagai request header.
+        if (!meta.isNullOrBlank()) {
+            // heuristik: ETag biasanya ada tanda kutip / W/...
+            conn.setRequestProperty("If-None-Match", meta)
+            conn.setRequestProperty("If-Modified-Since", meta)
+        }
+
+        conn.connect()
+        val code = conn.responseCode
+        val etag = conn.getHeaderField("ETag")
+        val lastMod = conn.getHeaderField("Last-Modified")
+
+        if (code == 304) {
+            return HttpRes(code = 304, body = null, etag = etag, lastModified = lastMod)
+        }
+
+        val body = if (code in 200..299) {
+            conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+        } else {
+            null
+        }
+
+        return HttpRes(code = code, body = body, etag = etag, lastModified = lastMod)
     }
 
     /**
