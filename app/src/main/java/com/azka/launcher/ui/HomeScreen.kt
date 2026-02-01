@@ -42,7 +42,7 @@ import java.util.Locale
 /**
  * Tahap 3.3:
  * - QR WiFi beneran (standar: WIFI:T:...;S:...;P:...;;)
- * - Tetap aman kalau gagal generate -> fallback teks "QR"
+ * - Implementasi QR dibuat kompatibel (tanpa produceState.value issue).
  */
 @Composable
 fun HomeScreen() {
@@ -57,6 +57,9 @@ fun HomeScreen() {
     // Hero slideshow state
     val heroItems = config.hero.items.filter { !it.imageUrl.isNullOrBlank() }
     var heroIndex by remember { mutableIntStateOf(0) }
+
+    // QR bitmap state
+    var wifiQrBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
     // Load cache + fetch remote sekali saat start
     LaunchedEffect(Unit) {
@@ -84,7 +87,7 @@ fun HomeScreen() {
         }
     }
 
-    // Slideshow hero (auto) — ringan
+    // Slideshow hero (auto)
     LaunchedEffect(config.hero.enabled, config.hero.autoSlide, config.hero.intervalMs, heroItems.size) {
         heroIndex = 0
         if (!config.hero.enabled) return@LaunchedEffect
@@ -97,6 +100,30 @@ fun HomeScreen() {
         }
     }
 
+    // Generate QR setiap wifi config berubah
+    LaunchedEffect(
+        config.wifiCard.enabled,
+        config.wifiCard.showQr,
+        config.wifiCard.ssid,
+        config.wifiCard.password,
+        config.wifiCard.encryption
+    ) {
+        wifiQrBitmap = null
+        if (!config.wifiCard.enabled || !config.wifiCard.showQr) return@LaunchedEffect
+        if (config.wifiCard.ssid.isBlank()) return@LaunchedEffect
+
+        wifiQrBitmap = withContext(Dispatchers.Default) {
+            runCatching {
+                val payload = buildWifiQrPayload(
+                    ssid = config.wifiCard.ssid,
+                    password = config.wifiCard.password,
+                    encryption = config.wifiCard.encryption
+                )
+                generateQrBitmap(text = payload, sizePx = 520)
+            }.getOrNull()
+        }
+    }
+
     val roomName = remember { getDeviceNameForRoom(context) }
     val roomLabel = buildString {
         append(config.roomLabel.prefix.ifBlank { "ROOM" })
@@ -106,41 +133,6 @@ fun HomeScreen() {
 
     val whatsappLine = "${config.contact.whatsappFoText}: ${config.contact.whatsappNumber}"
     val socialLine = "${config.contact.socialText}: ${config.contact.socialHandle}"
-
-    // ===== QR generation (async, cached by inputs) =====
-    val wifiQrBitmapState: State<Bitmap?> = produceState<Bitmap?>(initialValue = null,
-        key1 = config.wifiCard.ssid,
-        key2 = config.wifiCard.password,
-        key3 = config.wifiCard.encryption,
-        key4 = config.wifiCard.showQr,
-        key5 = config.wifiCard.enabled
-    ) {
-        if (!config.wifiCard.enabled || !config.wifiCard.showQr) {
-            value = null
-            return@produceState
-        }
-        val ssid = config.wifiCard.ssid
-        val pass = config.wifiCard.password
-        val enc = config.wifiCard.encryption
-        if (ssid.isBlank()) {
-            value = null
-            return@produceState
-        }
-
-        value = withContext(Dispatchers.Default) {
-            runCatching {
-                val wifiPayload = buildWifiQrPayload(
-                    ssid = ssid,
-                    password = pass,
-                    encryption = enc
-                )
-                generateQrBitmap(
-                    text = wifiPayload,
-                    sizePx = 520
-                )
-            }.getOrNull()
-        }
-    }
 
     Surface(modifier = Modifier.fillMaxSize()) {
         Box(modifier = Modifier.fillMaxSize()) {
@@ -176,6 +168,7 @@ fun HomeScreen() {
                     .fillMaxSize()
                     .padding(24.dp)
             ) {
+
                 // ===== Top bar =====
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -404,7 +397,6 @@ fun HomeScreen() {
                                     Spacer(modifier = Modifier.weight(1f))
 
                                     if (config.wifiCard.showQr) {
-                                        val bmp = wifiQrBitmapState.value
                                         Box(
                                             modifier = Modifier
                                                 .size(170.dp)
@@ -413,6 +405,7 @@ fun HomeScreen() {
                                                 .border(1.dp, Color(0x552A3442), RoundedCornerShape(12.dp)),
                                             contentAlignment = Alignment.Center
                                         ) {
+                                            val bmp = wifiQrBitmap
                                             if (bmp != null) {
                                                 Image(
                                                     bitmap = bmp.asImageBitmap(),
@@ -589,8 +582,6 @@ private fun buildWifiQrPayload(ssid: String, password: String, encryption: Strin
 }
 
 private fun escapeWifiField(value: String): String {
-    // Escape karakter spesial sesuai praktik umum payload WiFi QR
-    // \ ; , : " -> di-escape dengan backslash
     return value
         .replace("\\", "\\\\")
         .replace(";", "\\;")
@@ -610,7 +601,6 @@ private fun generateQrBitmap(text: String, sizePx: Int): Bitmap {
     val height = bitMatrix.height
     val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
 
-    // Warna: hitam-putih (kontras tinggi, cocok TV)
     val black = 0xFF000000.toInt()
     val white = 0xFFFFFFFF.toInt()
 
