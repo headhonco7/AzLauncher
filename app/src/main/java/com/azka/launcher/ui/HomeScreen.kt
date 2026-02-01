@@ -17,24 +17,26 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
 import com.azka.launcher.data.model.RemoteConfig
 import com.azka.launcher.data.repo.ConfigRepository
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 /**
- * Tahap 2.2:
- * - UI sudah digerakkan oleh RemoteConfig (teks dulu).
- * - Load cache cepat, fetch remote di background, simpan cache bila sukses.
- * - Belum render gambar/QR/slideshow: kita jaga compile hijau & minim risiko.
+ * Tahap 3:
+ * - Load gambar: wallpaper + logo + hero banner (slideshow ringan).
+ * - Tetap pakai cache config, fetch remote, simpan cache.
+ * - QR & launch app belum (nanti tahap berikut).
  */
 @Composable
 fun HomeScreen() {
@@ -47,6 +49,10 @@ fun HomeScreen() {
     // Jam sederhana (update 1x per menit)
     val timeText by rememberClockText(format24h = config.topRight.clock.format24h)
 
+    // Hero slideshow state
+    val heroItems = config.hero.items.filter { !it.imageUrl.isNullOrBlank() }
+    var heroIndex by remember { mutableIntStateOf(0) }
+
     // Load cache + fetch remote sekali saat start
     LaunchedEffect(Unit) {
         val cached = repo.loadCachedConfigOrNull()
@@ -55,11 +61,8 @@ fun HomeScreen() {
             statusText = "CONFIG: cache"
         }
 
-        // URL sementara. Nanti (Tahap Admin) kita buat bisa diedit.
         val url = ConfigRepository.DEFAULT_CONFIG_URL
-
-        // Kalau masih default placeholder example.com, kita skip fetch supaya tidak buang waktu.
-        if (url.startsWith("https://example.com")) {
+        if (url.contains("REPLACE_ME") || url.startsWith("https://example.com")) {
             statusText = "CONFIG: url not set"
             return@LaunchedEffect
         }
@@ -72,8 +75,20 @@ fun HomeScreen() {
             repo.saveCache(raw)
             statusText = "CONFIG: remote"
         } catch (_: Throwable) {
-            // Biarkan pakai cache/default
-            if (cached != null) statusText = "CONFIG: cache (remote failed)" else statusText = "CONFIG: default (remote failed)"
+            statusText = if (cached != null) "CONFIG: cache (remote failed)" else "CONFIG: default (remote failed)"
+        }
+    }
+
+    // Slideshow hero (auto) — ringan, tidak mengganggu compile/CI
+    LaunchedEffect(config.hero.enabled, config.hero.autoSlide, config.hero.intervalMs, heroItems.size) {
+        heroIndex = 0
+        if (!config.hero.enabled) return@LaunchedEffect
+        if (!config.hero.autoSlide) return@LaunchedEffect
+        if (heroItems.isEmpty()) return@LaunchedEffect
+
+        while (true) {
+            kotlinx.coroutines.delay(config.hero.intervalMs.coerceAtLeast(2000L))
+            heroIndex = (heroIndex + 1) % heroItems.size
         }
     }
 
@@ -88,49 +103,91 @@ fun HomeScreen() {
     val socialLine = "${config.contact.socialText}: ${config.contact.socialHandle}"
 
     Surface(modifier = Modifier.fillMaxSize()) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                // wallpaper placeholder (nanti diganti image remote)
-                .background(Color(0xFF101318))
-                .padding(24.dp)
-        ) {
-            Column(modifier = Modifier.fillMaxSize()) {
+        Box(modifier = Modifier.fillMaxSize()) {
+
+            // ===== Wallpaper (image) =====
+            if (!config.background.url.isNullOrBlank()) {
+                AsyncImage(
+                    model = config.background.url,
+                    contentDescription = "Wallpaper",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+                // overlay gelap supaya teks kebaca
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(
+                                    Color(0xAA0B0F16),
+                                    Color(0xD0101318)
+                                )
+                            )
+                        )
+                )
+            } else {
+                // fallback warna kalau belum ada wallpaper URL
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color(0xFF101318))
+                )
+            }
+
+            // ===== Content =====
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(24.dp)
+            ) {
 
                 // ===== Top bar: LOGO kiri, WEATHER + JAM kanan =====
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.Top
                 ) {
-                    // LOGO placeholder (nanti load image via URL config.branding.logoUrl)
+                    // LOGO area
                     Box(
                         modifier = Modifier
-                            .size(width = 160.dp, height = 72.dp)
+                            .size(width = 200.dp, height = 72.dp)
                             .clip(RoundedCornerShape(12.dp))
-                            .background(Color(0xFF1F2630))
-                            .border(1.dp, Color(0xFF2A3442), RoundedCornerShape(12.dp)),
-                        contentAlignment = Alignment.Center
+                            .background(Color(0x551F2630))
+                            .border(1.dp, Color(0x552A3442), RoundedCornerShape(12.dp))
+                            .padding(horizontal = 12.dp),
+                        contentAlignment = Alignment.CenterStart
                     ) {
-                        Text(
-                            text = config.branding.appTitle.ifBlank { "AzLauncher" },
-                            style = MaterialTheme.typography.titleMedium,
-                            color = Color(0xFFD7E3F4),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                        if (!config.branding.logoUrl.isNullOrBlank()) {
+                            AsyncImage(
+                                model = config.branding.logoUrl,
+                                contentDescription = "Logo",
+                                modifier = Modifier
+                                    .fillMaxHeight()
+                                    .fillMaxWidth(),
+                                contentScale = ContentScale.Fit
+                            )
+                        } else {
+                            Text(
+                                text = config.branding.appTitle.ifBlank { "AzLauncher" },
+                                style = MaterialTheme.typography.titleMedium,
+                                color = Color(0xFFE6EEF9),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
 
                     Spacer(modifier = Modifier.weight(1f))
 
-                    // WEATHER (static_text dari config dulu)
+                    // WEATHER (static_text dari config)
                     if (config.topRight.weather.enabled) {
                         Box(
                             modifier = Modifier
                                 .height(40.dp)
                                 .widthIn(min = 220.dp)
                                 .clip(RoundedCornerShape(10.dp))
-                                .background(Color(0xFF1F2630))
-                                .border(1.dp, Color(0xFF2A3442), RoundedCornerShape(10.dp))
+                                .background(Color(0x551F2630))
+                                .border(1.dp, Color(0x552A3442), RoundedCornerShape(10.dp))
                                 .padding(horizontal = 12.dp),
                             contentAlignment = Alignment.Center
                         ) {
@@ -153,8 +210,8 @@ fun HomeScreen() {
                                 .height(40.dp)
                                 .width(120.dp)
                                 .clip(RoundedCornerShape(10.dp))
-                                .background(Color(0xFF1F2630))
-                                .border(1.dp, Color(0xFF2A3442), RoundedCornerShape(10.dp)),
+                                .background(Color(0x551F2630))
+                                .border(1.dp, Color(0x552A3442), RoundedCornerShape(10.dp)),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
@@ -176,7 +233,7 @@ fun HomeScreen() {
                         .fillMaxWidth()
                         .weight(1f)
                 ) {
-                    // LEFT: SLIDE SHOW (placeholder)
+                    // LEFT: HERO (banner/slideshow)
                     Column(
                         modifier = Modifier
                             .weight(1f)
@@ -187,15 +244,35 @@ fun HomeScreen() {
                                 .fillMaxWidth()
                                 .weight(1f)
                                 .clip(RoundedCornerShape(16.dp))
-                                .background(Color(0xFF1B2230))
-                                .border(1.dp, Color(0xFF2A3442), RoundedCornerShape(16.dp)),
+                                .background(Color(0x441B2230))
+                                .border(1.dp, Color(0x552A3442), RoundedCornerShape(16.dp)),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(
-                                text = if (config.hero.enabled) "HERO (banner)" else "HERO disabled",
-                                style = MaterialTheme.typography.titleLarge,
-                                color = Color(0xFFD7E3F4)
-                            )
+                            if (config.hero.enabled && heroItems.isNotEmpty()) {
+                                val current = heroItems[heroIndex.coerceIn(0, heroItems.lastIndex)]
+                                AsyncImage(
+                                    model = current.imageUrl,
+                                    contentDescription = "Hero Banner",
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentScale = ContentScale.Crop
+                                )
+                                // overlay tipis agar teks tetap kebaca kalau nanti ditambah
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .background(
+                                            Brush.verticalGradient(
+                                                colors = listOf(Color(0x33000000), Color(0x66000000))
+                                            )
+                                        )
+                                )
+                            } else {
+                                Text(
+                                    text = if (config.hero.enabled) "HERO (no items)" else "HERO disabled",
+                                    style = MaterialTheme.typography.titleLarge,
+                                    color = Color(0xFFD7E3F4)
+                                )
+                            }
                         }
 
                         Spacer(modifier = Modifier.height(12.dp))
@@ -207,8 +284,8 @@ fun HomeScreen() {
                                     .fillMaxWidth()
                                     .height(44.dp)
                                     .clip(RoundedCornerShape(12.dp))
-                                    .background(Color(0xFF151B25))
-                                    .border(1.dp, Color(0xFF2A3442), RoundedCornerShape(12.dp))
+                                    .background(Color(0x55151B25))
+                                    .border(1.dp, Color(0x552A3442), RoundedCornerShape(12.dp))
                                     .padding(horizontal = 14.dp),
                                 contentAlignment = Alignment.CenterStart
                             ) {
@@ -238,8 +315,8 @@ fun HomeScreen() {
                                     .fillMaxWidth()
                                     .height(120.dp)
                                     .clip(RoundedCornerShape(16.dp))
-                                    .background(Color(0xFF1F2630))
-                                    .border(1.dp, Color(0xFF2A3442), RoundedCornerShape(16.dp))
+                                    .background(Color(0x551F2630))
+                                    .border(1.dp, Color(0x552A3442), RoundedCornerShape(16.dp))
                                     .padding(14.dp),
                                 contentAlignment = Alignment.CenterStart
                             ) {
@@ -271,8 +348,8 @@ fun HomeScreen() {
                                     .fillMaxWidth()
                                     .weight(1f)
                                     .clip(RoundedCornerShape(16.dp))
-                                    .background(Color(0xFF1B2230))
-                                    .border(1.dp, Color(0xFF2A3442), RoundedCornerShape(16.dp))
+                                    .background(Color(0x441B2230))
+                                    .border(1.dp, Color(0x552A3442), RoundedCornerShape(16.dp))
                                     .padding(14.dp)
                             ) {
                                 Column(
@@ -306,7 +383,7 @@ fun HomeScreen() {
                                                 .size(170.dp)
                                                 .clip(RoundedCornerShape(12.dp))
                                                 .background(Color(0xFF0F141D))
-                                                .border(1.dp, Color(0xFF2A3442), RoundedCornerShape(12.dp)),
+                                                .border(1.dp, Color(0x552A3442), RoundedCornerShape(12.dp)),
                                             contentAlignment = Alignment.Center
                                         ) {
                                             Text(
@@ -350,8 +427,8 @@ fun HomeScreen() {
                             .fillMaxWidth()
                             .height(40.dp)
                             .clip(RoundedCornerShape(12.dp))
-                            .background(Color(0xFF0E131B))
-                            .border(1.dp, Color(0xFF2A3442), RoundedCornerShape(12.dp))
+                            .background(Color(0x550E131B))
+                            .border(1.dp, Color(0x552A3442), RoundedCornerShape(12.dp))
                             .padding(horizontal = 14.dp),
                         contentAlignment = Alignment.CenterStart
                     ) {
@@ -385,8 +462,8 @@ private fun AppTile(label: String) {
         modifier = Modifier
             .size(width = 220.dp, height = 84.dp)
             .clip(RoundedCornerShape(16.dp))
-            .background(Color(0xFF1F2630))
-            .border(1.dp, Color(0xFF2A3442), RoundedCornerShape(16.dp))
+            .background(Color(0x551F2630))
+            .border(1.dp, Color(0x552A3442), RoundedCornerShape(16.dp))
             .focusable()
             .padding(14.dp),
         contentAlignment = Alignment.Center
@@ -407,10 +484,8 @@ private fun rememberClockText(format24h: Boolean): State<String> {
         SimpleDateFormat(if (format24h) "HH:mm" else "hh:mm a", Locale.getDefault())
     }
     val state = remember { mutableStateOf(formatter.format(Date())) }
-    val scope = rememberCoroutineScope()
 
     LaunchedEffect(formatter) {
-        // Update tiap menit agar ringan
         while (true) {
             state.value = formatter.format(Date())
             val now = System.currentTimeMillis()
@@ -419,27 +494,19 @@ private fun rememberClockText(format24h: Boolean): State<String> {
             kotlinx.coroutines.delay(delayMs.coerceAtLeast(250L))
         }
     }
-
-    // Scope dipakai oleh Compose secara internal; tidak perlu dipakai sekarang
-    @Suppress("UNUSED_VARIABLE")
-    val _unused = scope
-
     return state
 }
 
 private fun getDeviceNameForRoom(context: Context): String {
-    // Prioritas: Settings.Global.DEVICE_NAME (kalau teknisi set per kamar)
     val global = runCatching {
         Settings.Global.getString(context.contentResolver, Settings.Global.DEVICE_NAME)
     }.getOrNull()
     if (!global.isNullOrBlank()) return global.trim()
 
-    // Fallback: beberapa device vendor menaruh di Secure
     val secure = runCatching {
         Settings.Secure.getString(context.contentResolver, "device_name")
     }.getOrNull()
     if (!secure.isNullOrBlank()) return secure.trim()
 
-    // Fallback terakhir
     return Build.MODEL?.trim().orEmpty()
 }
