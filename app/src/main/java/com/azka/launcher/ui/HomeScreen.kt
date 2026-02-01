@@ -48,11 +48,6 @@ import java.util.Date
 import java.util.EnumMap
 import java.util.Locale
 
-/**
- * Tahap 5.1:
- * - Admin PIN dialog (dipicu dari MainActivity: tekan MENU 5x cepat)
- * - Setelah PIN benar: menu admin (Open Settings / Refresh Config / Exit)
- */
 @Composable
 fun HomeScreen() {
     val context = LocalContext.current
@@ -60,20 +55,15 @@ fun HomeScreen() {
 
     var config by remember { mutableStateOf(RemoteConfig()) }
     var statusText by remember { mutableStateOf("CONFIG: default") }
-
-    // refresh token agar bisa "Refresh Config" manual
     var refreshToken by remember { mutableIntStateOf(0) }
 
     val timeText by rememberClockText(format24h = config.topRight.clock.format24h)
 
-    // Hero slideshow state
     val heroItems = config.hero.items.filter { !it.imageUrl.isNullOrBlank() }
     var heroIndex by remember { mutableIntStateOf(0) }
 
-    // QR bitmap state
     var wifiQrBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
-    // Dialog info state (untuk tile klik)
     var infoDialogOpen by remember { mutableStateOf(false) }
     var infoDialogTitle by remember { mutableStateOf("Info") }
     var infoDialogMessage by remember { mutableStateOf("") }
@@ -84,15 +74,12 @@ fun HomeScreen() {
         infoDialogOpen = true
     }
 
-    // Admin gate states
     var pinText by remember { mutableStateOf("") }
     var pinError by remember { mutableStateOf<String?>(null) }
     var adminMenuOpen by remember { mutableStateOf(false) }
-
-    // NOTE: sementara hardcode. Nanti bisa dipindah ke remote config.
     val ADMIN_PIN = "1234"
 
-    // ===== LOAD CACHE + FETCH REMOTE (setiap refreshToken berubah) =====
+    // ===== initial load + manual refresh =====
     LaunchedEffect(refreshToken) {
         val cached = repo.loadCachedConfigOrNull()
         if (cached != null) {
@@ -107,31 +94,57 @@ fun HomeScreen() {
         }
 
         try {
-            val (remoteCfg, raw) = withContext(Dispatchers.IO) {
-                repo.fetchRemoteConfig(url)
+            val result = withContext(Dispatchers.IO) {
+                repo.fetchRemoteConfigIfChanged(url)
             }
-            config = remoteCfg
-            repo.saveCache(raw)
-            statusText = if (refreshToken == 0) "CONFIG: remote" else "CONFIG: remote (refreshed)"
+            if (result.updated && result.config != null) {
+                config = result.config
+                statusText = if (refreshToken == 0) "CONFIG: remote" else "CONFIG: remote (refreshed)"
+            } else {
+                statusText = if (cached != null) "CONFIG: cache (no change)" else "CONFIG: default (no change)"
+            }
         } catch (_: Throwable) {
             statusText = if (cached != null) "CONFIG: cache (remote failed)" else "CONFIG: default (remote failed)"
         }
     }
 
-    // Slideshow hero (auto)
+    // ===== auto refresh polling =====
+    LaunchedEffect(Unit) {
+        val url = ConfigRepository.DEFAULT_CONFIG_URL
+        if (url.contains("REPLACE_ME") || url.startsWith("https://example.com")) return@LaunchedEffect
+
+        // default 30 menit (bisa kita pindah ke config nanti)
+        val intervalMs = 30L * 60L * 1000L
+
+        while (true) {
+            kotlinx.coroutines.delay(intervalMs)
+
+            // best-effort: cek perubahan
+            runCatching {
+                val result = withContext(Dispatchers.IO) {
+                    repo.fetchRemoteConfigIfChanged(url)
+                }
+                if (result.updated && result.config != null) {
+                    config = result.config
+                    statusText = "CONFIG: remote (auto-updated)"
+                }
+            }
+        }
+    }
+
+    // Slideshow hero
     LaunchedEffect(config.hero.enabled, config.hero.autoSlide, config.hero.intervalMs, heroItems.size) {
         heroIndex = 0
         if (!config.hero.enabled) return@LaunchedEffect
         if (!config.hero.autoSlide) return@LaunchedEffect
         if (heroItems.isEmpty()) return@LaunchedEffect
-
         while (true) {
             kotlinx.coroutines.delay(config.hero.intervalMs.coerceAtLeast(2000L))
             heroIndex = (heroIndex + 1) % heroItems.size
         }
     }
 
-    // Generate QR setiap wifi config berubah
+    // QR generate
     LaunchedEffect(
         config.wifiCard.enabled,
         config.wifiCard.showQr,
@@ -142,7 +155,6 @@ fun HomeScreen() {
         wifiQrBitmap = null
         if (!config.wifiCard.enabled || !config.wifiCard.showQr) return@LaunchedEffect
         if (config.wifiCard.ssid.isBlank()) return@LaunchedEffect
-
         wifiQrBitmap = withContext(Dispatchers.Default) {
             runCatching {
                 val payload = buildWifiQrPayload(
@@ -165,19 +177,16 @@ fun HomeScreen() {
     val whatsappLine = "${config.contact.whatsappFoText}: ${config.contact.whatsappNumber}"
     val socialLine = "${config.contact.socialText}: ${config.contact.socialHandle}"
 
-    // ===== Info dialog (untuk tile) =====
     if (infoDialogOpen) {
         AlertDialog(
             onDismissRequest = { infoDialogOpen = false },
             title = { Text(infoDialogTitle) },
             text = { Text(infoDialogMessage) },
-            confirmButton = {
-                TextButton(onClick = { infoDialogOpen = false }) { Text("OK") }
-            }
+            confirmButton = { TextButton(onClick = { infoDialogOpen = false }) { Text("OK") } }
         )
     }
 
-    // ===== Admin PIN dialog (dipicu dari Activity) =====
+    // Admin PIN dialog
     if (AdminGate.show && !adminMenuOpen) {
         AlertDialog(
             onDismissRequest = {
@@ -233,7 +242,7 @@ fun HomeScreen() {
         )
     }
 
-    // ===== Admin menu dialog =====
+    // Admin menu dialog
     if (adminMenuOpen) {
         AlertDialog(
             onDismissRequest = {
@@ -241,18 +250,9 @@ fun HomeScreen() {
                 AdminGate.close()
             },
             title = { Text("Admin Menu") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(
-                        text = "Pilih tindakan admin.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Color(0xFFB7C7DD)
-                    )
-                }
-            },
+            text = { Text("Pilih tindakan admin.", color = Color(0xFFB7C7DD)) },
             confirmButton = {
                 TextButton(onClick = {
-                    // Refresh config (fetch remote lagi)
                     refreshToken++
                     adminMenuOpen = false
                     AdminGate.close()
@@ -261,13 +261,10 @@ fun HomeScreen() {
             dismissButton = {
                 Row {
                     TextButton(onClick = {
-                        // Open Android Settings (best-effort)
                         adminMenuOpen = false
                         AdminGate.close()
-
                         val act = context as? Activity
                         runCatching { act?.stopLockTask() }
-
                         runCatching {
                             val i = Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                             context.startActivity(i)
@@ -277,10 +274,8 @@ fun HomeScreen() {
                     }) { Text("Open Settings") }
 
                     TextButton(onClick = {
-                        // Exit launcher (admin)
                         adminMenuOpen = false
                         AdminGate.close()
-
                         val act = context as? Activity
                         runCatching { act?.stopLockTask() }
                         runCatching { act?.finishAffinity() }
@@ -290,11 +285,10 @@ fun HomeScreen() {
         )
     }
 
-    // ===== UI =====
+    // ===== UI rendering (sama seperti sebelumnya) =====
     Surface(modifier = Modifier.fillMaxSize()) {
         Box(modifier = Modifier.fillMaxSize()) {
 
-            // Wallpaper
             if (!config.background.url.isNullOrBlank()) {
                 AsyncImage(
                     model = config.background.url,
@@ -324,8 +318,6 @@ fun HomeScreen() {
                     .fillMaxSize()
                     .padding(24.dp)
             ) {
-
-                // Top bar
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.Top
@@ -404,7 +396,6 @@ fun HomeScreen() {
 
                 Spacer(modifier = Modifier.height(18.dp))
 
-                // Mid area
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -584,7 +575,6 @@ fun HomeScreen() {
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Apps Row (5 tile full width)
                 if (config.appsRow.enabled) {
                     val items = config.appsRow.items.take(5)
                     Row(
@@ -617,7 +607,6 @@ fun HomeScreen() {
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // Running text
                 if (config.runningText.enabled) {
                     Box(
                         modifier = Modifier
@@ -761,11 +750,6 @@ private fun launchAppByPackage(context: Context, packageName: String): Boolean {
     }
 }
 
-/**
- * Standar QR WiFi:
- * WIFI:T:WPA;S:<ssid>;P:<password>;;
- * T bisa: WPA / WEP / nopass
- */
 private fun buildWifiQrPayload(ssid: String, password: String, encryption: String): String {
     val t = when (encryption.trim().uppercase(Locale.US)) {
         "WEP" -> "WEP"
@@ -794,8 +778,8 @@ private fun generateQrBitmap(text: String, sizePx: Int): Bitmap {
     val writer = QRCodeWriter()
     val hints: EnumMap<EncodeHintType, Any> = EnumMap(EncodeHintType::class.java)
     hints[EncodeHintType.MARGIN] = 1
-
     val bitMatrix = writer.encode(text, BarcodeFormat.QR_CODE, sizePx, sizePx, hints)
+
     val width = bitMatrix.width
     val height = bitMatrix.height
     val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
