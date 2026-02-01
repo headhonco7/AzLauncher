@@ -5,11 +5,13 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.os.Build
 import android.provider.Settings
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
@@ -21,6 +23,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -42,11 +46,9 @@ import java.util.EnumMap
 import java.util.Locale
 
 /**
- * Tahap 4.1:
- * - Klik tile -> launch app berdasarkan packageName
- * - Jika placeholder "__...__" -> dialog "belum dikonfigurasi"
- * - Jika tidak terpasang -> dialog "belum terpasang"
- * - AppsRow dibuat 5 tile dan di-layout agar "full" kiri ke kanan (tanpa scroll).
+ * Tahap 4.2:
+ * - DPAD focus polish: tile fokus -> scale + border lebih terang.
+ * - Tetap klik untuk launch app + dialog.
  */
 @Composable
 fun HomeScreen() {
@@ -459,9 +461,9 @@ fun HomeScreen() {
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // ===== Apps Row: 5 tile full width (tanpa scroll) =====
+                // ===== Apps Row: 5 tile full width =====
                 if (config.appsRow.enabled) {
-                    val items = config.appsRow.items
+                    val items = config.appsRow.items.take(5)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -469,9 +471,7 @@ fun HomeScreen() {
                         horizontalArrangement = Arrangement.spacedBy(14.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // tampilkan maksimal 5 agar "full"
-                        val five = items.take(5)
-                        five.forEach { item ->
+                        items.forEach { item ->
                             AppTile(
                                 modifier = Modifier.weight(1f),
                                 label = item.label,
@@ -535,14 +535,26 @@ private fun AppTile(
     iconUrl: String?,
     onClick: () -> Unit
 ) {
+    var focused by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(targetValue = if (focused) 1.06f else 1.0f, label = "tileScale")
+
+    val borderColor = if (focused) Color(0xFF8AB4F8) else Color(0x552A3442)
+    val bgColor = if (focused) Color(0x771F2630) else Color(0x551F2630)
+
     Box(
         modifier = modifier
             .fillMaxHeight()
+            .scale(scale)
             .clip(RoundedCornerShape(16.dp))
-            .background(Color(0x551F2630))
-            .border(1.dp, Color(0x552A3442), RoundedCornerShape(16.dp))
+            .background(bgColor)
+            .border(2.dp, borderColor, RoundedCornerShape(16.dp))
+            .onFocusChanged { focused = it.isFocused }
             .focusable()
-            .clickable(onClick = onClick)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick
+            )
             .padding(horizontal = 14.dp, vertical = 10.dp),
         contentAlignment = Alignment.CenterStart
     ) {
@@ -613,7 +625,6 @@ private fun getDeviceNameForRoom(context: Context): String {
     return Build.MODEL?.trim().orEmpty()
 }
 
-/** Return true jika launch intent berhasil dijalankan. */
 private fun launchAppByPackage(context: Context, packageName: String): Boolean {
     return try {
         val pm = context.packageManager
@@ -627,11 +638,6 @@ private fun launchAppByPackage(context: Context, packageName: String): Boolean {
     }
 }
 
-/**
- * Standar QR WiFi:
- * WIFI:T:WPA;S:<ssid>;P:<password>;;
- * T bisa: WPA / WEP / nopass
- */
 private fun buildWifiQrPayload(ssid: String, password: String, encryption: String): String {
     val t = when (encryption.trim().uppercase(Locale.US)) {
         "WEP" -> "WEP"
