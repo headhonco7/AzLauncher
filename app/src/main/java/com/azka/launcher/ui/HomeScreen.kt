@@ -1,8 +1,10 @@
 package com.azka.launcher.ui
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.os.Build
 import android.provider.Settings
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
@@ -19,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
@@ -26,17 +29,20 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.azka.launcher.data.model.RemoteConfig
 import com.azka.launcher.data.repo.ConfigRepository
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.EncodeHintType
+import com.google.zxing.qrcode.QRCodeWriter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
+import java.util.EnumMap
 import java.util.Locale
 
 /**
- * Tahap 3.2:
- * - AppsRow tile bisa menampilkan iconUrl dari config.
- * - Fallback aman: kalau iconUrl kosong, tampilkan label.
- * - Belum klik launch app & QR (tahap berikut).
+ * Tahap 3.3:
+ * - QR WiFi beneran (standar: WIFI:T:...;S:...;P:...;;)
+ * - Tetap aman kalau gagal generate -> fallback teks "QR"
  */
 @Composable
 fun HomeScreen() {
@@ -46,7 +52,6 @@ fun HomeScreen() {
     var config by remember { mutableStateOf(RemoteConfig()) }
     var statusText by remember { mutableStateOf("CONFIG: default") }
 
-    // Jam sederhana (update 1x per menit)
     val timeText by rememberClockText(format24h = config.topRight.clock.format24h)
 
     // Hero slideshow state
@@ -102,6 +107,41 @@ fun HomeScreen() {
     val whatsappLine = "${config.contact.whatsappFoText}: ${config.contact.whatsappNumber}"
     val socialLine = "${config.contact.socialText}: ${config.contact.socialHandle}"
 
+    // ===== QR generation (async, cached by inputs) =====
+    val wifiQrBitmapState: State<Bitmap?> = produceState<Bitmap?>(initialValue = null,
+        key1 = config.wifiCard.ssid,
+        key2 = config.wifiCard.password,
+        key3 = config.wifiCard.encryption,
+        key4 = config.wifiCard.showQr,
+        key5 = config.wifiCard.enabled
+    ) {
+        if (!config.wifiCard.enabled || !config.wifiCard.showQr) {
+            value = null
+            return@produceState
+        }
+        val ssid = config.wifiCard.ssid
+        val pass = config.wifiCard.password
+        val enc = config.wifiCard.encryption
+        if (ssid.isBlank()) {
+            value = null
+            return@produceState
+        }
+
+        value = withContext(Dispatchers.Default) {
+            runCatching {
+                val wifiPayload = buildWifiQrPayload(
+                    ssid = ssid,
+                    password = pass,
+                    encryption = enc
+                )
+                generateQrBitmap(
+                    text = wifiPayload,
+                    sizePx = 520
+                )
+            }.getOrNull()
+        }
+    }
+
     Surface(modifier = Modifier.fillMaxSize()) {
         Box(modifier = Modifier.fillMaxSize()) {
 
@@ -113,16 +153,12 @@ fun HomeScreen() {
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop
                 )
-                // overlay gelap supaya teks kebaca
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .background(
                             Brush.verticalGradient(
-                                colors = listOf(
-                                    Color(0xAA0B0F16),
-                                    Color(0xD0101318)
-                                )
+                                colors = listOf(Color(0xAA0B0F16), Color(0xD0101318))
                             )
                         )
                 )
@@ -140,13 +176,11 @@ fun HomeScreen() {
                     .fillMaxSize()
                     .padding(24.dp)
             ) {
-
-                // ===== Top bar: LOGO kiri, WEATHER + JAM kanan =====
+                // ===== Top bar =====
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.Top
                 ) {
-                    // LOGO area
                     Box(
                         modifier = Modifier
                             .size(width = 200.dp, height = 72.dp)
@@ -178,7 +212,6 @@ fun HomeScreen() {
 
                     Spacer(modifier = Modifier.weight(1f))
 
-                    // WEATHER (static_text dari config)
                     if (config.topRight.weather.enabled) {
                         Box(
                             modifier = Modifier
@@ -198,11 +231,9 @@ fun HomeScreen() {
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
-
                         Spacer(modifier = Modifier.width(12.dp))
                     }
 
-                    // JAM
                     if (config.topRight.clock.enabled) {
                         Box(
                             modifier = Modifier
@@ -232,7 +263,6 @@ fun HomeScreen() {
                         .fillMaxWidth()
                         .weight(1f)
                 ) {
-                    // LEFT: HERO (banner/slideshow)
                     Column(
                         modifier = Modifier
                             .weight(1f)
@@ -275,7 +305,6 @@ fun HomeScreen() {
 
                         Spacer(modifier = Modifier.height(12.dp))
 
-                        // ROOM LABEL
                         if (config.roomLabel.enabled) {
                             Box(
                                 modifier = Modifier
@@ -300,13 +329,11 @@ fun HomeScreen() {
 
                     Spacer(modifier = Modifier.width(18.dp))
 
-                    // RIGHT: Contact + WiFi Card
                     Column(
                         modifier = Modifier
                             .widthIn(min = 320.dp, max = 420.dp)
                             .fillMaxHeight()
                     ) {
-                        // CONTACT (info only)
                         if (config.contact.enabled) {
                             Box(
                                 modifier = Modifier
@@ -339,7 +366,6 @@ fun HomeScreen() {
                             Spacer(modifier = Modifier.height(14.dp))
                         }
 
-                        // WIFI INFO CARD + QR (placeholder QR)
                         if (config.wifiCard.enabled) {
                             Box(
                                 modifier = Modifier
@@ -374,8 +400,11 @@ fun HomeScreen() {
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
+
                                     Spacer(modifier = Modifier.weight(1f))
+
                                     if (config.wifiCard.showQr) {
+                                        val bmp = wifiQrBitmapState.value
                                         Box(
                                             modifier = Modifier
                                                 .size(170.dp)
@@ -384,11 +413,20 @@ fun HomeScreen() {
                                                 .border(1.dp, Color(0x552A3442), RoundedCornerShape(12.dp)),
                                             contentAlignment = Alignment.Center
                                         ) {
-                                            Text(
-                                                text = "QR",
-                                                style = MaterialTheme.typography.titleLarge,
-                                                color = Color(0xFFB7C7DD)
-                                            )
+                                            if (bmp != null) {
+                                                Image(
+                                                    bitmap = bmp.asImageBitmap(),
+                                                    contentDescription = "WiFi QR",
+                                                    modifier = Modifier.fillMaxSize(),
+                                                    contentScale = ContentScale.Fit
+                                                )
+                                            } else {
+                                                Text(
+                                                    text = "QR",
+                                                    style = MaterialTheme.typography.titleLarge,
+                                                    color = Color(0xFFB7C7DD)
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -399,7 +437,6 @@ fun HomeScreen() {
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // ===== Apps Row (zona fokus DPAD) =====
                 if (config.appsRow.enabled) {
                     val items = config.appsRow.items
                     LazyRow(
@@ -411,17 +448,13 @@ fun HomeScreen() {
                         contentPadding = PaddingValues(horizontal = 2.dp)
                     ) {
                         items(items) { item ->
-                            AppTile(
-                                label = item.label,
-                                iconUrl = item.iconUrl
-                            )
+                            AppTile(label = item.label, iconUrl = item.iconUrl)
                         }
                     }
                 }
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // ===== Running text =====
                 if (config.runningText.enabled) {
                     Box(
                         modifier = Modifier
@@ -443,7 +476,6 @@ fun HomeScreen() {
                     }
                 }
 
-                // ===== Status kecil (debug sementara) =====
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
                     text = statusText,
@@ -458,10 +490,7 @@ fun HomeScreen() {
 }
 
 @Composable
-private fun AppTile(
-    label: String,
-    iconUrl: String?
-) {
+private fun AppTile(label: String, iconUrl: String?) {
     Box(
         modifier = Modifier
             .size(width = 220.dp, height = 84.dp)
@@ -537,4 +566,58 @@ private fun getDeviceNameForRoom(context: Context): String {
     if (!secure.isNullOrBlank()) return secure.trim()
 
     return Build.MODEL?.trim().orEmpty()
+}
+
+/**
+ * Standar QR WiFi:
+ * WIFI:T:WPA;S:<ssid>;P:<password>;;
+ * T bisa: WPA / WEP / nopass
+ */
+private fun buildWifiQrPayload(ssid: String, password: String, encryption: String): String {
+    val t = when (encryption.trim().uppercase(Locale.US)) {
+        "WEP" -> "WEP"
+        "NOPASS", "OPEN", "NONE" -> "nopass"
+        else -> "WPA"
+    }
+    val s = escapeWifiField(ssid)
+    val p = escapeWifiField(password)
+    return if (t == "nopass") {
+        "WIFI:T:nopass;S:$s;;"
+    } else {
+        "WIFI:T:$t;S:$s;P:$p;;"
+    }
+}
+
+private fun escapeWifiField(value: String): String {
+    // Escape karakter spesial sesuai praktik umum payload WiFi QR
+    // \ ; , : " -> di-escape dengan backslash
+    return value
+        .replace("\\", "\\\\")
+        .replace(";", "\\;")
+        .replace(",", "\\,")
+        .replace(":", "\\:")
+        .replace("\"", "\\\"")
+}
+
+private fun generateQrBitmap(text: String, sizePx: Int): Bitmap {
+    val writer = QRCodeWriter()
+    val hints: EnumMap<EncodeHintType, Any> = EnumMap(EncodeHintType::class.java)
+    hints[EncodeHintType.MARGIN] = 1
+
+    val bitMatrix = writer.encode(text, BarcodeFormat.QR_CODE, sizePx, sizePx, hints)
+
+    val width = bitMatrix.width
+    val height = bitMatrix.height
+    val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+
+    // Warna: hitam-putih (kontras tinggi, cocok TV)
+    val black = 0xFF000000.toInt()
+    val white = 0xFFFFFFFF.toInt()
+
+    for (y in 0 until height) {
+        for (x in 0 until width) {
+            bmp.setPixel(x, y, if (bitMatrix[x, y]) black else white)
+        }
+    }
+    return bmp
 }
