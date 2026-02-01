@@ -1,20 +1,22 @@
 package com.azka.launcher.ui
 
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.os.Build
 import android.provider.Settings
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -40,9 +42,11 @@ import java.util.EnumMap
 import java.util.Locale
 
 /**
- * Tahap 3.3:
- * - QR WiFi beneran (standar: WIFI:T:...;S:...;P:...;;)
- * - Implementasi QR dibuat kompatibel (tanpa produceState.value issue).
+ * Tahap 4.1:
+ * - Klik tile -> launch app berdasarkan packageName
+ * - Jika placeholder "__...__" -> dialog "belum dikonfigurasi"
+ * - Jika tidak terpasang -> dialog "belum terpasang"
+ * - AppsRow dibuat 5 tile dan di-layout agar "full" kiri ke kanan (tanpa scroll).
  */
 @Composable
 fun HomeScreen() {
@@ -60,6 +64,17 @@ fun HomeScreen() {
 
     // QR bitmap state
     var wifiQrBitmap by remember { mutableStateOf<Bitmap?>(null) }
+
+    // Dialog state
+    var dialogOpen by remember { mutableStateOf(false) }
+    var dialogTitle by remember { mutableStateOf("Info") }
+    var dialogMessage by remember { mutableStateOf("") }
+
+    fun showInfo(title: String, msg: String) {
+        dialogTitle = title
+        dialogMessage = msg
+        dialogOpen = true
+    }
 
     // Load cache + fetch remote sekali saat start
     LaunchedEffect(Unit) {
@@ -133,6 +148,20 @@ fun HomeScreen() {
 
     val whatsappLine = "${config.contact.whatsappFoText}: ${config.contact.whatsappNumber}"
     val socialLine = "${config.contact.socialText}: ${config.contact.socialHandle}"
+
+    // Dialog UI
+    if (dialogOpen) {
+        AlertDialog(
+            onDismissRequest = { dialogOpen = false },
+            title = { Text(dialogTitle) },
+            text = { Text(dialogMessage) },
+            confirmButton = {
+                TextButton(onClick = { dialogOpen = false }) {
+                    Text("OK")
+                }
+            }
+        )
+    }
 
     Surface(modifier = Modifier.fillMaxSize()) {
         Box(modifier = Modifier.fillMaxSize()) {
@@ -430,18 +459,35 @@ fun HomeScreen() {
 
                 Spacer(modifier = Modifier.height(16.dp))
 
+                // ===== Apps Row: 5 tile full width (tanpa scroll) =====
                 if (config.appsRow.enabled) {
                     val items = config.appsRow.items
-                    LazyRow(
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(92.dp),
+                            .height(96.dp),
                         horizontalArrangement = Arrangement.spacedBy(14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        contentPadding = PaddingValues(horizontal = 2.dp)
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        items(items) { item ->
-                            AppTile(label = item.label, iconUrl = item.iconUrl)
+                        // tampilkan maksimal 5 agar "full"
+                        val five = items.take(5)
+                        five.forEach { item ->
+                            AppTile(
+                                modifier = Modifier.weight(1f),
+                                label = item.label,
+                                iconUrl = item.iconUrl,
+                                onClick = {
+                                    val pkg = item.packageName
+                                    when {
+                                        pkg.isBlank() -> showInfo("Aplikasi", "Package kosong.")
+                                        pkg.startsWith("__") -> showInfo("Aplikasi belum siap", "Aplikasi \"${item.label}\" belum dikonfigurasi.")
+                                        else -> {
+                                            val ok = launchAppByPackage(context, pkg)
+                                            if (!ok) showInfo("Aplikasi tidak tersedia", "\"${item.label}\" belum terpasang.")
+                                        }
+                                    }
+                                }
+                            )
                         }
                     }
                 }
@@ -483,14 +529,20 @@ fun HomeScreen() {
 }
 
 @Composable
-private fun AppTile(label: String, iconUrl: String?) {
+private fun AppTile(
+    modifier: Modifier,
+    label: String,
+    iconUrl: String?,
+    onClick: () -> Unit
+) {
     Box(
-        modifier = Modifier
-            .size(width = 220.dp, height = 84.dp)
+        modifier = modifier
+            .fillMaxHeight()
             .clip(RoundedCornerShape(16.dp))
             .background(Color(0x551F2630))
             .border(1.dp, Color(0x552A3442), RoundedCornerShape(16.dp))
             .focusable()
+            .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 10.dp),
         contentAlignment = Alignment.CenterStart
     ) {
@@ -559,6 +611,20 @@ private fun getDeviceNameForRoom(context: Context): String {
     if (!secure.isNullOrBlank()) return secure.trim()
 
     return Build.MODEL?.trim().orEmpty()
+}
+
+/** Return true jika launch intent berhasil dijalankan. */
+private fun launchAppByPackage(context: Context, packageName: String): Boolean {
+    return try {
+        val pm = context.packageManager
+        val intent: Intent? = pm.getLaunchIntentForPackage(packageName)
+        if (intent == null) return false
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(intent)
+        true
+    } catch (_: Throwable) {
+        false
+    }
 }
 
 /**
