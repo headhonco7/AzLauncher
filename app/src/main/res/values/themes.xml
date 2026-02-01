@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!--
+        Theme minimal untuk AzLauncher.
+        UI utama pakai Jetpack Compose, jadi theme ini hanya:
+        - no action bar
+        - kompatibel Android TV / STB
+    -->
+    <style name="Theme.AzLauncher" parent="@android:style/Theme.DeviceDefault.NoActionBar">
+        <!-- Warna ini hanya fallback -->
+        <item name="android:colorBackground">#101318</item>
+        <item name="android:windowBackground">#101318</item>
+    </style>
+
+</resources>
