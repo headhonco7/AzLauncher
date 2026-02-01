@@ -1,5 +1,6 @@
 package com.azka.launcher.ui
 
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -30,6 +32,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
@@ -46,9 +49,9 @@ import java.util.EnumMap
 import java.util.Locale
 
 /**
- * Tahap 4.2:
- * - DPAD focus polish: tile fokus -> scale + border lebih terang.
- * - Tetap klik untuk launch app + dialog.
+ * Tahap 5.1:
+ * - Admin PIN dialog (dipicu dari MainActivity: tekan MENU 5x cepat)
+ * - Setelah PIN benar: menu admin (Open Settings / Refresh Config / Exit)
  */
 @Composable
 fun HomeScreen() {
@@ -57,6 +60,9 @@ fun HomeScreen() {
 
     var config by remember { mutableStateOf(RemoteConfig()) }
     var statusText by remember { mutableStateOf("CONFIG: default") }
+
+    // refresh token agar bisa "Refresh Config" manual
+    var refreshToken by remember { mutableIntStateOf(0) }
 
     val timeText by rememberClockText(format24h = config.topRight.clock.format24h)
 
@@ -67,23 +73,31 @@ fun HomeScreen() {
     // QR bitmap state
     var wifiQrBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
-    // Dialog state
-    var dialogOpen by remember { mutableStateOf(false) }
-    var dialogTitle by remember { mutableStateOf("Info") }
-    var dialogMessage by remember { mutableStateOf("") }
+    // Dialog info state (untuk tile klik)
+    var infoDialogOpen by remember { mutableStateOf(false) }
+    var infoDialogTitle by remember { mutableStateOf("Info") }
+    var infoDialogMessage by remember { mutableStateOf("") }
 
     fun showInfo(title: String, msg: String) {
-        dialogTitle = title
-        dialogMessage = msg
-        dialogOpen = true
+        infoDialogTitle = title
+        infoDialogMessage = msg
+        infoDialogOpen = true
     }
 
-    // Load cache + fetch remote sekali saat start
-    LaunchedEffect(Unit) {
+    // Admin gate states
+    var pinText by remember { mutableStateOf("") }
+    var pinError by remember { mutableStateOf<String?>(null) }
+    var adminMenuOpen by remember { mutableStateOf(false) }
+
+    // NOTE: sementara hardcode. Nanti bisa dipindah ke remote config.
+    val ADMIN_PIN = "1234"
+
+    // ===== LOAD CACHE + FETCH REMOTE (setiap refreshToken berubah) =====
+    LaunchedEffect(refreshToken) {
         val cached = repo.loadCachedConfigOrNull()
         if (cached != null) {
             config = cached
-            statusText = "CONFIG: cache"
+            statusText = if (refreshToken == 0) "CONFIG: cache" else "CONFIG: cache (refreshing)"
         }
 
         val url = ConfigRepository.DEFAULT_CONFIG_URL
@@ -98,7 +112,7 @@ fun HomeScreen() {
             }
             config = remoteCfg
             repo.saveCache(raw)
-            statusText = "CONFIG: remote"
+            statusText = if (refreshToken == 0) "CONFIG: remote" else "CONFIG: remote (refreshed)"
         } catch (_: Throwable) {
             statusText = if (cached != null) "CONFIG: cache (remote failed)" else "CONFIG: default (remote failed)"
         }
@@ -151,24 +165,136 @@ fun HomeScreen() {
     val whatsappLine = "${config.contact.whatsappFoText}: ${config.contact.whatsappNumber}"
     val socialLine = "${config.contact.socialText}: ${config.contact.socialHandle}"
 
-    // Dialog UI
-    if (dialogOpen) {
+    // ===== Info dialog (untuk tile) =====
+    if (infoDialogOpen) {
         AlertDialog(
-            onDismissRequest = { dialogOpen = false },
-            title = { Text(dialogTitle) },
-            text = { Text(dialogMessage) },
+            onDismissRequest = { infoDialogOpen = false },
+            title = { Text(infoDialogTitle) },
+            text = { Text(infoDialogMessage) },
             confirmButton = {
-                TextButton(onClick = { dialogOpen = false }) {
-                    Text("OK")
+                TextButton(onClick = { infoDialogOpen = false }) { Text("OK") }
+            }
+        )
+    }
+
+    // ===== Admin PIN dialog (dipicu dari Activity) =====
+    if (AdminGate.show && !adminMenuOpen) {
+        AlertDialog(
+            onDismissRequest = {
+                pinText = ""
+                pinError = null
+                AdminGate.close()
+            },
+            title = { Text("Admin PIN") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "Masukkan PIN untuk membuka menu admin.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color(0xFFB7C7DD)
+                    )
+                    OutlinedTextField(
+                        value = pinText,
+                        onValueChange = {
+                            pinText = it.take(10)
+                            pinError = null
+                        },
+                        label = { Text("PIN") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation()
+                    )
+                    if (pinError != null) {
+                        Text(
+                            text = pinError ?: "",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFFFF6B6B)
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (pinText == ADMIN_PIN) {
+                        pinText = ""
+                        pinError = null
+                        adminMenuOpen = true
+                    } else {
+                        pinError = "PIN salah"
+                    }
+                }) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    pinText = ""
+                    pinError = null
+                    AdminGate.close()
+                }) { Text("Batal") }
+            }
+        )
+    }
+
+    // ===== Admin menu dialog =====
+    if (adminMenuOpen) {
+        AlertDialog(
+            onDismissRequest = {
+                adminMenuOpen = false
+                AdminGate.close()
+            },
+            title = { Text("Admin Menu") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "Pilih tindakan admin.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color(0xFFB7C7DD)
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    // Refresh config (fetch remote lagi)
+                    refreshToken++
+                    adminMenuOpen = false
+                    AdminGate.close()
+                }) { Text("Refresh Config") }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = {
+                        // Open Android Settings (best-effort)
+                        adminMenuOpen = false
+                        AdminGate.close()
+
+                        val act = context as? Activity
+                        runCatching { act?.stopLockTask() }
+
+                        runCatching {
+                            val i = Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            context.startActivity(i)
+                        }.onFailure {
+                            showInfo("Gagal", "Tidak bisa membuka Settings di device ini.")
+                        }
+                    }) { Text("Open Settings") }
+
+                    TextButton(onClick = {
+                        // Exit launcher (admin)
+                        adminMenuOpen = false
+                        AdminGate.close()
+
+                        val act = context as? Activity
+                        runCatching { act?.stopLockTask() }
+                        runCatching { act?.finishAffinity() }
+                    }) { Text("Exit") }
                 }
             }
         )
     }
 
+    // ===== UI =====
     Surface(modifier = Modifier.fillMaxSize()) {
         Box(modifier = Modifier.fillMaxSize()) {
 
-            // ===== Wallpaper (image) =====
+            // Wallpaper
             if (!config.background.url.isNullOrBlank()) {
                 AsyncImage(
                     model = config.background.url,
@@ -193,14 +319,13 @@ fun HomeScreen() {
                 )
             }
 
-            // ===== Content =====
             Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(24.dp)
             ) {
 
-                // ===== Top bar =====
+                // Top bar
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.Top
@@ -218,9 +343,7 @@ fun HomeScreen() {
                             AsyncImage(
                                 model = config.branding.logoUrl,
                                 contentDescription = "Logo",
-                                modifier = Modifier
-                                    .fillMaxHeight()
-                                    .fillMaxWidth(),
+                                modifier = Modifier.fillMaxHeight().fillMaxWidth(),
                                 contentScale = ContentScale.Fit
                             )
                         } else {
@@ -281,7 +404,7 @@ fun HomeScreen() {
 
                 Spacer(modifier = Modifier.height(18.dp))
 
-                // ===== Mid area =====
+                // Mid area
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -461,7 +584,7 @@ fun HomeScreen() {
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // ===== Apps Row: 5 tile full width =====
+                // Apps Row (5 tile full width)
                 if (config.appsRow.enabled) {
                     val items = config.appsRow.items.take(5)
                     Row(
@@ -494,6 +617,7 @@ fun HomeScreen() {
 
                 Spacer(modifier = Modifier.height(10.dp))
 
+                // Running text
                 if (config.runningText.enabled) {
                     Box(
                         modifier = Modifier
@@ -628,8 +752,7 @@ private fun getDeviceNameForRoom(context: Context): String {
 private fun launchAppByPackage(context: Context, packageName: String): Boolean {
     return try {
         val pm = context.packageManager
-        val intent: Intent? = pm.getLaunchIntentForPackage(packageName)
-        if (intent == null) return false
+        val intent = pm.getLaunchIntentForPackage(packageName) ?: return false
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(intent)
         true
@@ -638,6 +761,11 @@ private fun launchAppByPackage(context: Context, packageName: String): Boolean {
     }
 }
 
+/**
+ * Standar QR WiFi:
+ * WIFI:T:WPA;S:<ssid>;P:<password>;;
+ * T bisa: WPA / WEP / nopass
+ */
 private fun buildWifiQrPayload(ssid: String, password: String, encryption: String): String {
     val t = when (encryption.trim().uppercase(Locale.US)) {
         "WEP" -> "WEP"
@@ -668,7 +796,6 @@ private fun generateQrBitmap(text: String, sizePx: Int): Bitmap {
     hints[EncodeHintType.MARGIN] = 1
 
     val bitMatrix = writer.encode(text, BarcodeFormat.QR_CODE, sizePx, sizePx, hints)
-
     val width = bitMatrix.width
     val height = bitMatrix.height
     val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
