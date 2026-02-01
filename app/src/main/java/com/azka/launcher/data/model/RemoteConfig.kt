@@ -1,8 +1,8 @@
 package com.azka.launcher.data.model
 
 /**
- * Config v1 (ringan) yang cukup untuk men-drive UI mock kamu.
- * Parsing kita buat toleran: kalau field hilang, pakai default aman.
+ * Config v1 (ringan) yang cukup untuk men-drive UI mock.
+ * Parsing toleran: field boleh hilang -> pakai default aman.
  */
 data class RemoteConfig(
     val schemaVersion: Int = 1,
@@ -87,10 +87,12 @@ data class RemoteConfig(
         val enabled: Boolean = true,
         val title: String = "Apps",
         val items: List<AppItem> = listOf(
-            AppItem(id = "youtube", label = "YouTube", packageName = "com.google.android.youtube.tv"),
+            // ✅ Urutan 5 ikon sesuai request
             AppItem(id = "netflix", label = "Netflix", packageName = "com.netflix.ninja"),
-            AppItem(id = "iptv1", label = "Live TV 1", packageName = "__IPTV1_PACKAGE__"),
-            AppItem(id = "iptv2", label = "Live TV 2", packageName = "__IPTV2_PACKAGE__")
+            AppItem(id = "youtube", label = "YouTube", packageName = "com.google.android.youtube.tv"),
+            AppItem(id = "iptv", label = "IPTV", packageName = "__IPTV_PACKAGE__"),
+            AppItem(id = "youtubekids", label = "YouTube Kids", packageName = "__YOUTUBE_KIDS_PACKAGE__"),
+            AppItem(id = "cast", label = "Cast", packageName = "__CAST_PACKAGE__")
         )
     ) {
         data class AppItem(
