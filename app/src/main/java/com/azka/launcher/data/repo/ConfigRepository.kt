@@ -15,7 +15,7 @@ class ConfigRepository(
         /**
          * RAW URL config.json dari repo konten.
          */
-        const val DEFAULT_CONFIG_URL = "https://raw.githubusercontent.com/REPLACE_ME/azlauncher-content/main/config.json"
+        const val DEFAULT_CONFIG_URL = "https://raw.githubusercontent.com/headhonco7/azlauncher-content/main/config.json"
 
         private const val CACHE_FILE_NAME = "azlauncher_config_cache.json"
         private const val META_FILE_NAME = "azlauncher_config_meta.txt"
