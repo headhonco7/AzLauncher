@@ -8,7 +8,7 @@
         android:allowBackup="true"
         android:label="AzLauncher"
         android:supportsRtl="true"
-        android:theme="@style/Theme.AzLauncher">
+        android:theme="@style/Theme.Material3.DayNight.NoActionBar">
 
         <!-- Main launcher activity -->
         <activity
