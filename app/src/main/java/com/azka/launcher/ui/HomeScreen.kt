@@ -56,7 +56,6 @@ fun HomeScreen() {
     val context = LocalContext.current
     val repo = remember { ConfigRepository(context) }
 
-    // FIX WhatsApp number (tidak boleh dari config)
     val FIXED_WA_NUMBER = "0851 22000 590"
 
     var config by remember { mutableStateOf(RemoteConfig()) }
@@ -90,6 +89,12 @@ fun HomeScreen() {
     var adminMenuOpen by remember { mutableStateOf(false) }
     val ADMIN_PIN = "1234"
 
+    fun shortErr(t: Throwable): String {
+        val name = t::class.java.simpleName.ifBlank { "Error" }
+        val msg = (t.message ?: "").trim()
+        return if (msg.isBlank()) name else "$name: ${msg.take(80)}"
+    }
+
     LaunchedEffect(refreshToken) {
         val cached = repo.loadCachedConfigOrNull()
         if (cached != null) {
@@ -107,8 +112,13 @@ fun HomeScreen() {
             } else {
                 statusText = if (cached != null) "CONFIG: cache (no change)" else "CONFIG: default (no change)"
             }
-        } catch (_: Throwable) {
-            statusText = if (cached != null) "CONFIG: cache (remote failed)" else "CONFIG: default (remote failed)"
+        } catch (t: Throwable) {
+            // IMPORTANT: tampilkan error supaya kita tahu akar masalahnya
+            statusText = if (cached != null) {
+                "CONFIG: cache (remote failed: ${shortErr(t)})"
+            } else {
+                "CONFIG: default (remote failed: ${shortErr(t)})"
+            }
         }
     }
 
@@ -124,11 +134,13 @@ fun HomeScreen() {
                     config = result.config
                     statusText = "CONFIG: remote (auto-updated)"
                 }
+            }.onFailure { t ->
+                // jangan spam, tapi tetap ada clue
+                statusText = "CONFIG: remote failed (auto: ${shortErr(t)})"
             }
         }
     }
 
-    // hero auto slide 8–12 detik
     LaunchedEffect(config.hero.enabled, config.hero.autoSlide, config.hero.intervalMs, heroItems.size) {
         heroIndex = 0
         if (!config.hero.enabled || !config.hero.autoSlide || heroItems.isEmpty()) return@LaunchedEffect
@@ -237,7 +249,6 @@ fun HomeScreen() {
         )
     }
 
-    // ===== UI constants & glass style =====
     val outerPad = 28.dp
     val gap = 18.dp
     val cardRadius = 18.dp
@@ -255,7 +266,6 @@ fun HomeScreen() {
     Surface(Modifier.fillMaxSize()) {
         Box(Modifier.fillMaxSize()) {
 
-            // Background image + vignette (wallpaper updateable)
             if (!config.background.url.isNullOrBlank()) {
                 AsyncImage(
                     model = config.background.url,
@@ -279,8 +289,6 @@ fun HomeScreen() {
                     .fillMaxSize()
                     .padding(start = outerPad, end = outerPad, top = outerPad, bottom = contentBottomPadding)
             ) {
-
-                // TOP BAR (FIX)
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -330,15 +338,8 @@ fun HomeScreen() {
 
                 Spacer(Modifier.height(gap))
 
-                // MID ROW (Hero + WiFi)
-                Row(
-                    Modifier.fillMaxWidth().weight(1f),
-                    horizontalArrangement = Arrangement.spacedBy(gap)
-                ) {
-                    // HERO (updateable: items image+text)
-                    Box(
-                        modifier = glass(Modifier.weight(1f).fillMaxHeight()).padding(18.dp)
-                    ) {
+                Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(gap)) {
+                    Box(modifier = glass(Modifier.weight(1f).fillMaxHeight()).padding(18.dp)) {
                         val current =
                             if (heroItems.isNotEmpty()) heroItems[heroIndex.coerceIn(0, heroItems.lastIndex)] else null
 
@@ -361,10 +362,7 @@ fun HomeScreen() {
 
                             Spacer(Modifier.width(16.dp))
 
-                            Column(
-                                Modifier.weight(0.45f).fillMaxHeight(),
-                                verticalArrangement = Arrangement.Center
-                            ) {
+                            Column(Modifier.weight(0.45f).fillMaxHeight(), verticalArrangement = Arrangement.Center) {
                                 Text(
                                     text = current?.title.orEmpty(),
                                     color = Color.White,
@@ -387,9 +385,7 @@ fun HomeScreen() {
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
-
                                 Spacer(Modifier.height(18.dp))
-
                                 if (heroItems.isNotEmpty()) {
                                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                         heroItems.take(7).forEachIndexed { idx, _ ->
@@ -406,10 +402,7 @@ fun HomeScreen() {
                         }
                     }
 
-                    // WIFI (updateable: ssid+password)
-                    Box(
-                        modifier = glass(Modifier.weight(0.8f).fillMaxHeight()).padding(18.dp)
-                    ) {
+                    Box(modifier = glass(Modifier.weight(0.8f).fillMaxHeight()).padding(18.dp)) {
                         Row(
                             Modifier.fillMaxSize(),
                             horizontalArrangement = Arrangement.spacedBy(18.dp),
@@ -419,9 +412,7 @@ fun HomeScreen() {
                                 Text(
                                     text = "Wi-Fi Info",
                                     color = Color.White,
-                                    style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                                    style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold)
                                 )
                                 Spacer(Modifier.height(10.dp))
                                 Text(
@@ -442,9 +433,7 @@ fun HomeScreen() {
                                 Text(
                                     text = "Scan untuk terhubung",
                                     color = Color(0xFFE0E6EF),
-                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold)
                                 )
                             }
 
@@ -471,7 +460,6 @@ fun HomeScreen() {
 
                 Spacer(Modifier.height(gap))
 
-                // APPS (FIX list, FIX package placeholder, tidak update dari config)
                 if (config.appsRow.enabled) {
                     val items = config.appsRow.items.take(5)
                     Row(
@@ -504,10 +492,7 @@ fun HomeScreen() {
 
                 Spacer(Modifier.height(gap))
 
-                // WHATSAPP (FIX number)
-                Box(
-                    modifier = glass(Modifier.fillMaxWidth().height(120.dp)).padding(18.dp)
-                ) {
+                Box(modifier = glass(Modifier.fillMaxWidth().height(120.dp)).padding(18.dp)) {
                     Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
                         Box(
                             Modifier.size(64.dp).clip(CircleShape).background(Color(0xFF25D366)),
@@ -530,7 +515,6 @@ fun HomeScreen() {
                 Text(statusText, color = Color(0x88FFFFFF), style = MaterialTheme.typography.labelSmall)
             }
 
-            // RUNNING TEXT (updateable: text)
             if (config.runningText.enabled) {
                 Text(
                     text = config.runningText.text,
