@@ -4,7 +4,6 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
-import android.os.Build
 import android.provider.Settings
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Image
@@ -14,6 +13,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
@@ -34,6 +34,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -55,22 +56,26 @@ fun HomeScreen() {
     val context = LocalContext.current
     val repo = remember { ConfigRepository(context) }
 
+    // FIX WhatsApp number (tidak boleh dari config)
+    val FIXED_WA_NUMBER = "0851 22000 590"
+
     var config by remember { mutableStateOf(RemoteConfig()) }
     var statusText by remember { mutableStateOf("CONFIG: default") }
     var refreshToken by remember { mutableIntStateOf(0) }
 
     val timeText by rememberClockText(format24h = config.topRight.clock.format24h)
+    val dateText by rememberDateText(
+        enabled = config.topRight.clock.showDate,
+        localeTag = config.topRight.clock.dateLocale
+    )
 
     val heroItems = config.hero.items.filter { !it.imageUrl.isNullOrBlank() }
     var heroIndex by remember { mutableIntStateOf(0) }
 
     var wifiQrBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
-    // ===== Focus: Apps row =====
     val appFocusRequesters = remember { List(5) { FocusRequester() } }
-    var appsRowRendered by remember { mutableStateOf(false) }
 
-    // ===== Info dialog =====
     var infoDialogOpen by remember { mutableStateOf(false) }
     var infoDialogTitle by remember { mutableStateOf("Info") }
     var infoDialogMessage by remember { mutableStateOf("") }
@@ -80,13 +85,11 @@ fun HomeScreen() {
         infoDialogOpen = true
     }
 
-    // ===== Admin =====
     var pinText by remember { mutableStateOf("") }
     var pinError by remember { mutableStateOf<String?>(null) }
     var adminMenuOpen by remember { mutableStateOf(false) }
     val ADMIN_PIN = "1234"
 
-    // ===== initial + manual refresh =====
     LaunchedEffect(refreshToken) {
         val cached = repo.loadCachedConfigOrNull()
         if (cached != null) {
@@ -94,14 +97,10 @@ fun HomeScreen() {
             statusText = if (refreshToken == 0) "CONFIG: cache" else "CONFIG: cache (refreshing)"
         }
 
-        val url = ConfigRepository.DEFAULT_CONFIG_URL
-        if (url.contains("REPLACE_ME") || url.startsWith("https://example.com")) {
-            statusText = "CONFIG: url not set"
-            return@LaunchedEffect
-        }
-
         try {
-            val result = withContext(Dispatchers.IO) { repo.fetchRemoteConfigIfChanged(url) }
+            val result = withContext(Dispatchers.IO) {
+                repo.fetchRemoteConfigIfChanged(ConfigRepository.DEFAULT_CONFIG_URL)
+            }
             if (result.updated && result.config != null) {
                 config = result.config
                 statusText = if (refreshToken == 0) "CONFIG: remote" else "CONFIG: remote (refreshed)"
@@ -113,15 +112,14 @@ fun HomeScreen() {
         }
     }
 
-    // ===== auto refresh polling =====
     LaunchedEffect(Unit) {
-        val url = ConfigRepository.DEFAULT_CONFIG_URL
-        if (url.contains("REPLACE_ME") || url.startsWith("https://example.com")) return@LaunchedEffect
         val intervalMs = 30L * 60L * 1000L
         while (true) {
             kotlinx.coroutines.delay(intervalMs)
             runCatching {
-                val result = withContext(Dispatchers.IO) { repo.fetchRemoteConfigIfChanged(url) }
+                val result = withContext(Dispatchers.IO) {
+                    repo.fetchRemoteConfigIfChanged(ConfigRepository.DEFAULT_CONFIG_URL)
+                }
                 if (result.updated && result.config != null) {
                     config = result.config
                     statusText = "CONFIG: remote (auto-updated)"
@@ -130,17 +128,16 @@ fun HomeScreen() {
         }
     }
 
-    // ===== Hero slideshow =====
+    // hero auto slide 8–12 detik
     LaunchedEffect(config.hero.enabled, config.hero.autoSlide, config.hero.intervalMs, heroItems.size) {
         heroIndex = 0
         if (!config.hero.enabled || !config.hero.autoSlide || heroItems.isEmpty()) return@LaunchedEffect
         while (true) {
-            kotlinx.coroutines.delay(config.hero.intervalMs.coerceAtLeast(2000L))
+            kotlinx.coroutines.delay(config.hero.intervalMs.coerceIn(8_000L, 12_000L))
             heroIndex = (heroIndex + 1) % heroItems.size
         }
     }
 
-    // ===== QR =====
     LaunchedEffect(
         config.wifiCard.enabled,
         config.wifiCard.showQr,
@@ -151,6 +148,7 @@ fun HomeScreen() {
         wifiQrBitmap = null
         if (!config.wifiCard.enabled || !config.wifiCard.showQr) return@LaunchedEffect
         if (config.wifiCard.ssid.isBlank()) return@LaunchedEffect
+
         wifiQrBitmap = withContext(Dispatchers.Default) {
             runCatching {
                 val payload = buildWifiQrPayload(
@@ -158,17 +156,11 @@ fun HomeScreen() {
                     password = config.wifiCard.password,
                     encryption = config.wifiCard.encryption
                 )
-                generateQrBitmap(text = payload, sizePx = 520)
+                generateQrBitmap(text = payload, sizePx = 700)
             }.getOrNull()
         }
     }
 
-    val roomName = remember { getDeviceNameForRoom(context) }
-    val roomLabel = "${config.roomLabel.prefix.ifBlank { "ROOM" }} ${roomName.ifBlank { "UNKNOWN" }}"
-    val whatsappLine = "${config.contact.whatsappFoText}: ${config.contact.whatsappNumber}"
-    val socialLine = "${config.contact.socialText}: ${config.contact.socialHandle}"
-
-    // ===== Info dialog =====
     if (infoDialogOpen) {
         AlertDialog(
             onDismissRequest = { infoDialogOpen = false },
@@ -178,14 +170,9 @@ fun HomeScreen() {
         )
     }
 
-    // ===== Admin PIN =====
     if (AdminGate.show && !adminMenuOpen) {
         AlertDialog(
-            onDismissRequest = {
-                pinText = ""
-                pinError = null
-                AdminGate.close()
-            },
+            onDismissRequest = { pinText = ""; pinError = null; AdminGate.close() },
             title = { Text("Admin PIN") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -203,19 +190,17 @@ fun HomeScreen() {
             confirmButton = {
                 TextButton(onClick = {
                     if (pinText == ADMIN_PIN) {
-                        pinText = ""; pinError = null; adminMenuOpen = true
+                        pinText = ""; pinError = null
+                        adminMenuOpen = true
                     } else pinError = "PIN salah"
                 }) { Text("OK") }
             },
             dismissButton = {
-                TextButton(onClick = {
-                    pinText = ""; pinError = null; AdminGate.close()
-                }) { Text("Batal") }
+                TextButton(onClick = { pinText = ""; pinError = null; AdminGate.close() }) { Text("Batal") }
             }
         )
     }
 
-    // ===== Admin Menu =====
     if (adminMenuOpen) {
         AlertDialog(
             onDismissRequest = { adminMenuOpen = false; AdminGate.close() },
@@ -236,11 +221,10 @@ fun HomeScreen() {
                         runCatching { act?.stopLockTask() }
                         runCatching {
                             context.startActivity(
-                                Intent(Settings.ACTION_SETTINGS)
-                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                             )
                         }.onFailure { showInfo("Gagal", "Tidak bisa membuka Settings.") }
-                    }) { Text("Open Settings") }
+                    }) { Text("Settings") }
 
                     TextButton(onClick = {
                         adminMenuOpen = false; AdminGate.close()
@@ -253,11 +237,25 @@ fun HomeScreen() {
         )
     }
 
-    // ===== UI =====
+    // ===== UI constants & glass style =====
+    val outerPad = 28.dp
+    val gap = 18.dp
+    val cardRadius = 18.dp
+    val glassBg = Color(0x5A0B0F16)
+    val glassBorder = Color(0x40FFFFFF)
+    fun glass(mod: Modifier): Modifier =
+        mod.clip(RoundedCornerShape(cardRadius))
+            .background(glassBg)
+            .border(1.dp, glassBorder, RoundedCornerShape(cardRadius))
+
+    val marqueeHeight = 34.dp
+    val marqueeBottomPadding = 14.dp
+    val contentBottomPadding = marqueeHeight + marqueeBottomPadding + 10.dp
+
     Surface(Modifier.fillMaxSize()) {
         Box(Modifier.fillMaxSize()) {
 
-            // Background
+            // Background image + vignette (wallpaper updateable)
             if (!config.background.url.isNullOrBlank()) {
                 AsyncImage(
                     model = config.background.url,
@@ -268,153 +266,222 @@ fun HomeScreen() {
                 Box(
                     Modifier.fillMaxSize().background(
                         Brush.verticalGradient(
-                            listOf(Color(0xAA0B0F16), Color(0xD0101318))
+                            colors = listOf(Color(0xAA000000), Color(0x55000000), Color(0xAA000000))
                         )
                     )
                 )
             } else {
-                Box(Modifier.fillMaxSize().background(Color(0xFF101318)))
+                Box(Modifier.fillMaxSize().background(Color(0xFF0B0F16)))
             }
 
-            Column(Modifier.fillMaxSize().padding(24.dp)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(start = outerPad, end = outerPad, top = outerPad, bottom = contentBottomPadding)
+            ) {
 
-                // ===== Top bar =====
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
-                    Box(
-                        Modifier.size(200.dp, 72.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(Color(0x551F2630))
-                            .border(1.dp, Color(0x552A3442), RoundedCornerShape(12.dp))
-                            .padding(horizontal = 12.dp),
-                        contentAlignment = Alignment.CenterStart
+                // TOP BAR (FIX)
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = glass(Modifier).padding(horizontal = 18.dp, vertical = 14.dp)
                     ) {
-                        if (!config.branding.logoUrl.isNullOrBlank()) {
-                            AsyncImage(
-                                model = config.branding.logoUrl,
-                                contentDescription = "Logo",
-                                modifier = Modifier.fillMaxSize(),
-                                contentScale = ContentScale.Fit
-                            )
-                        } else {
-                            Text(
-                                config.branding.appTitle.ifBlank { "AzLauncher" },
-                                color = Color(0xFFE6EEF9),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-                    Spacer(Modifier.weight(1f))
-                    if (config.topRight.clock.enabled) {
                         Box(
-                            Modifier.height(40.dp).width(120.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(Color(0x551F2630))
-                                .border(1.dp, Color(0x552A3442), RoundedCornerShape(10.dp)),
+                            Modifier.size(54.dp)
+                                .clip(CircleShape)
+                                .background(Color(0x33000000))
+                                .border(1.dp, Color(0x55FFFFFF), CircleShape),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(timeText, color = Color(0xFFB7C7DD))
+                            if (!config.branding.logoUrl.isNullOrBlank()) {
+                                AsyncImage(
+                                    model = config.branding.logoUrl,
+                                    contentDescription = "Logo",
+                                    modifier = Modifier.fillMaxSize().padding(8.dp),
+                                    contentScale = ContentScale.Fit
+                                )
+                            } else {
+                                Text("A", color = Color.White, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                        Spacer(Modifier.width(14.dp))
+                        Text(
+                            text = config.branding.appTitle.ifBlank { "AzLauncher" },
+                            color = Color.White,
+                            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+
+                    Spacer(Modifier.weight(1f))
+
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text(
+                            timeText,
+                            color = Color.White,
+                            style = MaterialTheme.typography.displaySmall.copy(fontWeight = FontWeight.ExtraBold)
+                        )
+                        if (dateText.isNotBlank()) {
+                            Text(dateText, color = Color(0xFFE0E6EF), style = MaterialTheme.typography.titleMedium)
                         }
                     }
                 }
 
-                Spacer(Modifier.height(18.dp))
+                Spacer(Modifier.height(gap))
 
-                // ===== Middle =====
-                Row(Modifier.fillMaxWidth().weight(1f)) {
+                // MID ROW (Hero + WiFi)
+                Row(
+                    Modifier.fillMaxWidth().weight(1f),
+                    horizontalArrangement = Arrangement.spacedBy(gap)
+                ) {
+                    // HERO (updateable: items image+text)
+                    Box(
+                        modifier = glass(Modifier.weight(1f).fillMaxHeight()).padding(18.dp)
+                    ) {
+                        val current =
+                            if (heroItems.isNotEmpty()) heroItems[heroIndex.coerceIn(0, heroItems.lastIndex)] else null
 
-                    // Hero (no focus)
-                    Column(Modifier.weight(1f)) {
-                        Box(
-                            Modifier.fillMaxWidth().weight(1f)
-                                .clip(RoundedCornerShape(16.dp))
-                                .background(Color(0x441B2230))
-                                .border(1.dp, Color(0x552A3442), RoundedCornerShape(16.dp))
-                        ) {
-                            if (config.hero.enabled && heroItems.isNotEmpty()) {
-                                AsyncImage(
-                                    model = heroItems[heroIndex].imageUrl,
-                                    contentDescription = "Hero",
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentScale = ContentScale.Crop
-                                )
-                            }
-                        }
-                        Spacer(Modifier.height(12.dp))
-                        if (config.roomLabel.enabled) {
+                        Row(Modifier.fillMaxSize()) {
                             Box(
-                                Modifier.fillMaxWidth().height(44.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(Color(0x55151B25))
-                                    .border(1.dp, Color(0x552A3442), RoundedCornerShape(12.dp))
-                                    .padding(horizontal = 14.dp),
-                                contentAlignment = Alignment.CenterStart
-                            ) {
-                                Text(roomLabel, color = Color(0xFFE6EEF9))
-                            }
-                        }
-                    }
-
-                    Spacer(Modifier.width(18.dp))
-
-                    // Right column
-                    Column(Modifier.widthIn(min = 320.dp, max = 420.dp)) {
-                        if (config.contact.enabled) {
-                            Box(
-                                Modifier.fillMaxWidth().height(120.dp)
+                                Modifier.weight(0.55f).fillMaxHeight()
                                     .clip(RoundedCornerShape(16.dp))
-                                    .background(Color(0x551F2630))
-                                    .border(1.dp, Color(0x552A3442), RoundedCornerShape(16.dp))
-                                    .padding(14.dp)
+                                    .background(Color(0x22000000))
+                                    .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(16.dp))
                             ) {
-                                Column {
-                                    Text(whatsappLine, color = Color(0xFFD7E3F4))
-                                    Text(socialLine, color = Color(0xFFD7E3F4))
+                                if (current?.imageUrl != null) {
+                                    AsyncImage(
+                                        model = current.imageUrl,
+                                        contentDescription = "Hero",
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentScale = ContentScale.Crop
+                                    )
                                 }
                             }
-                            Spacer(Modifier.height(14.dp))
-                        }
-                        if (config.wifiCard.enabled) {
-                            Box(
-                                Modifier.fillMaxWidth().weight(1f)
-                                    .clip(RoundedCornerShape(16.dp))
-                                    .background(Color(0x441B2230))
-                                    .border(1.dp, Color(0x552A3442), RoundedCornerShape(16.dp))
-                                    .padding(14.dp)
+
+                            Spacer(Modifier.width(16.dp))
+
+                            Column(
+                                Modifier.weight(0.45f).fillMaxHeight(),
+                                verticalArrangement = Arrangement.Center
                             ) {
-                                Column {
-                                    Text(config.wifiCard.title, color = Color(0xFFD7E3F4))
-                                    Spacer(Modifier.height(6.dp))
-                                    Text("SSID: ${config.wifiCard.ssid}", color = Color(0xFFB7C7DD))
-                                    Text("PASS: ${config.wifiCard.password}", color = Color(0xFFB7C7DD))
-                                    Spacer(Modifier.weight(1f))
-                                    if (config.wifiCard.showQr && wifiQrBitmap != null) {
-                                        Image(
-                                            bitmap = wifiQrBitmap!!.asImageBitmap(),
-                                            contentDescription = "WiFi QR",
-                                            modifier = Modifier.size(170.dp)
-                                        )
+                                Text(
+                                    text = current?.title.orEmpty(),
+                                    color = Color.White,
+                                    style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Spacer(Modifier.height(10.dp))
+                                Text(
+                                    text = current?.subtitle.orEmpty(),
+                                    color = Color(0xFFE0E6EF),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = current?.note.orEmpty(),
+                                    color = Color(0xFFE0E6EF),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+
+                                Spacer(Modifier.height(18.dp))
+
+                                if (heroItems.isNotEmpty()) {
+                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        heroItems.take(7).forEachIndexed { idx, _ ->
+                                            val active = idx == heroIndex
+                                            Box(
+                                                Modifier.size(if (active) 10.dp else 8.dp)
+                                                    .clip(CircleShape)
+                                                    .background(if (active) Color.White else Color(0x66FFFFFF))
+                                            )
+                                        }
                                     }
                                 }
                             }
                         }
                     }
+
+                    // WIFI (updateable: ssid+password)
+                    Box(
+                        modifier = glass(Modifier.weight(0.8f).fillMaxHeight()).padding(18.dp)
+                    ) {
+                        Row(
+                            Modifier.fillMaxSize(),
+                            horizontalArrangement = Arrangement.spacedBy(18.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
+                                Text(
+                                    text = "Wi-Fi Info",
+                                    color = Color.White,
+                                    style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Spacer(Modifier.height(10.dp))
+                                Text(
+                                    text = "SSID: ${config.wifiCard.ssid}",
+                                    color = Color(0xFFE0E6EF),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "Password: ${config.wifiCard.password}",
+                                    color = Color(0xFFE0E6EF),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Spacer(Modifier.height(16.dp))
+                                Text(
+                                    text = "Scan untuk terhubung",
+                                    color = Color(0xFFE0E6EF),
+                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+
+                            val bmp = wifiQrBitmap
+                            Box(
+                                modifier = Modifier.size(210.dp)
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(Color.White)
+                                    .border(2.dp, Color(0x33000000), RoundedCornerShape(16.dp)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (bmp != null) {
+                                    Image(
+                                        bitmap = bmp.asImageBitmap(),
+                                        contentDescription = "WiFi QR",
+                                        modifier = Modifier.fillMaxSize().padding(10.dp),
+                                        contentScale = ContentScale.Fit
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
 
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(gap))
 
-                // ===== Apps Row (FOCUS HERE) =====
+                // APPS (FIX list, FIX package placeholder, tidak update dari config)
                 if (config.appsRow.enabled) {
                     val items = config.appsRow.items.take(5)
                     Row(
-                        Modifier.fillMaxWidth().height(96.dp),
-                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                        modifier = Modifier.fillMaxWidth().height(112.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         items.forEachIndexed { index, item ->
-                            AppTile(
-                                modifier = Modifier
-                                    .weight(1f)
+                            AppCardItem(
+                                modifier = Modifier.weight(1f).fillMaxHeight()
                                     .focusRequester(appFocusRequesters[index]),
                                 label = item.label,
                                 iconUrl = item.iconUrl,
@@ -432,55 +499,75 @@ fun HomeScreen() {
                             )
                         }
                     }
+                    LaunchedEffect(Unit) { appFocusRequesters.firstOrNull()?.requestFocus() }
+                }
 
-                    // Default focus → Netflix (index 0)
-                    LaunchedEffect(Unit) {
-                        appsRowRendered = true
-                        appFocusRequesters.firstOrNull()?.requestFocus()
+                Spacer(Modifier.height(gap))
+
+                // WHATSAPP (FIX number)
+                Box(
+                    modifier = glass(Modifier.fillMaxWidth().height(120.dp)).padding(18.dp)
+                ) {
+                    Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            Modifier.size(64.dp).clip(CircleShape).background(Color(0xFF25D366)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("WA", color = Color.White, fontWeight = FontWeight.ExtraBold)
+                        }
+                        Spacer(Modifier.width(18.dp))
+                        Text(
+                            text = FIXED_WA_NUMBER,
+                            color = Color.White,
+                            style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.ExtraBold),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
 
                 Spacer(Modifier.height(10.dp))
+                Text(statusText, color = Color(0x88FFFFFF), style = MaterialTheme.typography.labelSmall)
+            }
 
-                if (config.runningText.enabled) {
-                    Box(
-                        Modifier.fillMaxWidth().height(40.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(Color(0x550E131B))
-                            .border(1.dp, Color(0x552A3442), RoundedCornerShape(12.dp))
-                            .padding(horizontal = 14.dp),
-                        contentAlignment = Alignment.CenterStart
-                    ) {
-                        Text(config.runningText.text, color = Color(0xFFB7C7DD))
-                    }
-                }
-
-                Spacer(Modifier.height(8.dp))
-                Text(statusText, color = Color(0xFF5E6B7D))
+            // RUNNING TEXT (updateable: text)
+            if (config.runningText.enabled) {
+                Text(
+                    text = config.runningText.text,
+                    color = Color(0xFFFFD34D),
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .fillMaxWidth()
+                        .padding(bottom = 14.dp)
+                        .padding(start = outerPad, end = outerPad)
+                )
             }
         }
     }
 }
 
 @Composable
-private fun AppTile(
+private fun AppCardItem(
     modifier: Modifier,
     label: String,
     iconUrl: String?,
     onClick: () -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
-    val scale by animateFloatAsState(if (focused) 1.06f else 1f, label = "tileScale")
-    val borderColor = if (focused) Color(0xFF8AB4F8) else Color(0x552A3442)
-    val bgColor = if (focused) Color(0x771F2630) else Color(0x551F2630)
+    val scale by animateFloatAsState(if (focused) 1.04f else 1f, label = "appCardScale")
+
+    val cardBg = if (focused) Color(0xAA111827) else Color(0x88111827)
+    val border = if (focused) Color(0xFFFFFFFF) else Color(0x55FFFFFF)
 
     Box(
         modifier
-            .fillMaxHeight()
             .scale(scale)
-            .clip(RoundedCornerShape(16.dp))
-            .background(bgColor)
-            .border(2.dp, borderColor, RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(18.dp))
+            .background(cardBg)
+            .border(2.dp, border, RoundedCornerShape(18.dp))
             .onFocusChanged { focused = it.isFocused }
             .focusable()
             .clickable(
@@ -488,32 +575,36 @@ private fun AppTile(
                 indication = null,
                 onClick = onClick
             )
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        contentAlignment = Alignment.CenterStart
+            .padding(8.dp),
+        contentAlignment = Alignment.Center
     ) {
-        Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
-            if (!iconUrl.isNullOrBlank()) {
-                Box(
-                    Modifier.size(52.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(Color(0x33000000))
-                        .border(1.dp, Color(0x332A3442), RoundedCornerShape(12.dp))
-                ) {
-                    AsyncImage(
-                        model = iconUrl,
-                        contentDescription = "$label icon",
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Fit
-                    )
-                }
-                Spacer(Modifier.width(12.dp))
+        if (!iconUrl.isNullOrBlank()) {
+            Box(
+                Modifier.fillMaxHeight()
+                    .aspectRatio(2.1f)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Color(0x22FFFFFF)),
+                contentAlignment = Alignment.Center
+            ) {
+                AsyncImage(
+                    model = iconUrl,
+                    contentDescription = label,
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 10.dp),
+                    contentScale = ContentScale.Fit
+                )
             }
-            Text(label, color = Color(0xFFD7E3F4), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        } else {
+            Text(
+                text = label,
+                color = Color.White,
+                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }
 
-// ===== Helpers (unchanged) =====
 @Composable
 private fun rememberClockText(format24h: Boolean): State<String> {
     val formatter = remember(format24h) {
@@ -531,25 +622,40 @@ private fun rememberClockText(format24h: Boolean): State<String> {
     return state
 }
 
-private fun getDeviceNameForRoom(context: Context): String {
-    val global = runCatching {
-        Settings.Global.getString(context.contentResolver, Settings.Global.DEVICE_NAME)
-    }.getOrNull()
-    if (!global.isNullOrBlank()) return global.trim()
-    val secure = runCatching {
-        Settings.Secure.getString(context.contentResolver, "device_name")
-    }.getOrNull()
-    if (!secure.isNullOrBlank()) return secure.trim()
-    return Build.MODEL?.trim().orEmpty()
+@Composable
+private fun rememberDateText(enabled: Boolean, localeTag: String): State<String> {
+    val state = remember { mutableStateOf("") }
+    val locale = remember(localeTag) {
+        runCatching { Locale.forLanguageTag(localeTag) }.getOrElse { Locale("id", "ID") }
+    }
+    val formatter = remember(locale) { SimpleDateFormat("EEEE, d MMMM", locale) }
+
+    LaunchedEffect(enabled, formatter) {
+        if (!enabled) {
+            state.value = ""
+            return@LaunchedEffect
+        }
+        while (true) {
+            state.value = formatter.format(Date()).replaceFirstChar { it.titlecase(locale) }
+            val now = System.currentTimeMillis()
+            val nextMinute = ((now / 60000L) + 1) * 60000L
+            kotlinx.coroutines.delay((nextMinute - now).coerceAtLeast(250L))
+        }
+    }
+    return state
 }
 
-private fun launchAppByPackage(context: Context, packageName: String): Boolean = try {
-    context.packageManager.getLaunchIntentForPackage(packageName)?.let {
-        it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        context.startActivity(it)
+private fun launchAppByPackage(context: Context, packageName: String): Boolean {
+    return try {
+        val pm = context.packageManager
+        val intent = pm.getLaunchIntentForPackage(packageName) ?: return false
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(intent)
         true
-    } ?: false
-} catch (_: Throwable) { false }
+    } catch (_: Throwable) {
+        false
+    }
+}
 
 private fun buildWifiQrPayload(ssid: String, password: String, encryption: String): String {
     val t = when (encryption.trim().uppercase(Locale.US)) {
@@ -563,17 +669,29 @@ private fun buildWifiQrPayload(ssid: String, password: String, encryption: Strin
 }
 
 private fun escapeWifiField(value: String): String =
-    value.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,").replace(":", "\\:").replace("\"", "\\\"")
+    value.replace("\\", "\\\\")
+        .replace(";", "\\;")
+        .replace(",", "\\,")
+        .replace(":", "\\:")
+        .replace("\"", "\\\"")
 
 private fun generateQrBitmap(text: String, sizePx: Int): Bitmap {
     val writer = QRCodeWriter()
     val hints: EnumMap<EncodeHintType, Any> = EnumMap(EncodeHintType::class.java)
     hints[EncodeHintType.MARGIN] = 1
     val bitMatrix = writer.encode(text, BarcodeFormat.QR_CODE, sizePx, sizePx, hints)
-    val bmp = Bitmap.createBitmap(bitMatrix.width, bitMatrix.height, Bitmap.Config.ARGB_8888)
+
+    val width = bitMatrix.width
+    val height = bitMatrix.height
+    val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+
     val black = 0xFF000000.toInt()
     val white = 0xFFFFFFFF.toInt()
-    for (y in 0 until bitMatrix.height) for (x in 0 until bitMatrix.width)
-        bmp.setPixel(x, y, if (bitMatrix[x, y]) black else white)
+
+    for (y in 0 until height) {
+        for (x in 0 until width) {
+            bmp.setPixel(x, y, if (bitMatrix[x, y]) black else white)
+        }
+    }
     return bmp
 }
