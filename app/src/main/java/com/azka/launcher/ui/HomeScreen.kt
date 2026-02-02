@@ -3,11 +3,16 @@ package com.azka.launcher.ui
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.Drawable
 import android.provider.Settings
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
@@ -26,19 +31,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.azka.launcher.R
 import com.azka.launcher.data.model.RemoteConfig
 import com.azka.launcher.data.repo.ConfigRepository
 import com.google.zxing.BarcodeFormat
@@ -56,25 +61,36 @@ fun HomeScreen() {
     val context = LocalContext.current
     val repo = remember { ConfigRepository(context) }
 
+    // FIX WhatsApp number (tidak boleh dari config)
     val FIXED_WA_NUMBER = "0851 22000 590"
+
+    // FIX app list sesuai permintaan (package name umum Android TV)
+    val fixedApps = remember {
+        listOf(
+            FixedApp("Netflix", "com.netflix.ninja"),
+            FixedApp("YouTube", "com.google.android.youtube.tv"),
+            FixedApp("Vidio", "com.vidio.android"),
+            FixedApp("YouTube Kids", "com.google.android.apps.youtube.kids"),
+            FixedApp("Spotify", "com.spotify.tv.android")
+        )
+    }
 
     var config by remember { mutableStateOf(RemoteConfig()) }
     var statusText by remember { mutableStateOf("CONFIG: default") }
     var refreshToken by remember { mutableIntStateOf(0) }
 
-    val timeText by rememberClockText(format24h = config.topRight.clock.format24h)
-    val dateText by rememberDateText(
-        enabled = config.topRight.clock.showDate,
-        localeTag = config.topRight.clock.dateLocale
-    )
+    val timeText by rememberClockText(format24h = true)
+    val dateText by rememberDateText(enabled = true, localeTag = "id")
 
     val heroItems = config.hero.items.filter { !it.imageUrl.isNullOrBlank() }
     var heroIndex by remember { mutableIntStateOf(0) }
 
     var wifiQrBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
+    // Focus: Apps row
     val appFocusRequesters = remember { List(5) { FocusRequester() } }
 
+    // Info dialog
     var infoDialogOpen by remember { mutableStateOf(false) }
     var infoDialogTitle by remember { mutableStateOf("Info") }
     var infoDialogMessage by remember { mutableStateOf("") }
@@ -84,6 +100,7 @@ fun HomeScreen() {
         infoDialogOpen = true
     }
 
+    // Admin PIN
     var pinText by remember { mutableStateOf("") }
     var pinError by remember { mutableStateOf<String?>(null) }
     var adminMenuOpen by remember { mutableStateOf(false) }
@@ -95,6 +112,7 @@ fun HomeScreen() {
         return if (msg.isBlank()) name else "$name: ${msg.take(80)}"
     }
 
+    // ===== initial + manual refresh =====
     LaunchedEffect(refreshToken) {
         val cached = repo.loadCachedConfigOrNull()
         if (cached != null) {
@@ -113,7 +131,6 @@ fun HomeScreen() {
                 statusText = if (cached != null) "CONFIG: cache (no change)" else "CONFIG: default (no change)"
             }
         } catch (t: Throwable) {
-            // IMPORTANT: tampilkan error supaya kita tahu akar masalahnya
             statusText = if (cached != null) {
                 "CONFIG: cache (remote failed: ${shortErr(t)})"
             } else {
@@ -122,6 +139,7 @@ fun HomeScreen() {
         }
     }
 
+    // ===== auto refresh polling =====
     LaunchedEffect(Unit) {
         val intervalMs = 30L * 60L * 1000L
         while (true) {
@@ -135,12 +153,12 @@ fun HomeScreen() {
                     statusText = "CONFIG: remote (auto-updated)"
                 }
             }.onFailure { t ->
-                // jangan spam, tapi tetap ada clue
                 statusText = "CONFIG: remote failed (auto: ${shortErr(t)})"
             }
         }
     }
 
+    // ===== Hero slideshow (8–12 detik, tanpa gesture) =====
     LaunchedEffect(config.hero.enabled, config.hero.autoSlide, config.hero.intervalMs, heroItems.size) {
         heroIndex = 0
         if (!config.hero.enabled || !config.hero.autoSlide || heroItems.isEmpty()) return@LaunchedEffect
@@ -150,15 +168,9 @@ fun HomeScreen() {
         }
     }
 
-    LaunchedEffect(
-        config.wifiCard.enabled,
-        config.wifiCard.showQr,
-        config.wifiCard.ssid,
-        config.wifiCard.password,
-        config.wifiCard.encryption
-    ) {
+    // ===== QR generate =====
+    LaunchedEffect(config.wifiCard.ssid, config.wifiCard.password, config.wifiCard.encryption) {
         wifiQrBitmap = null
-        if (!config.wifiCard.enabled || !config.wifiCard.showQr) return@LaunchedEffect
         if (config.wifiCard.ssid.isBlank()) return@LaunchedEffect
 
         wifiQrBitmap = withContext(Dispatchers.Default) {
@@ -168,11 +180,12 @@ fun HomeScreen() {
                     password = config.wifiCard.password,
                     encryption = config.wifiCard.encryption
                 )
-                generateQrBitmap(text = payload, sizePx = 700)
+                generateQrBitmap(text = payload, sizePx = 720)
             }.getOrNull()
         }
     }
 
+    // ===== dialogs =====
     if (infoDialogOpen) {
         AlertDialog(
             onDismissRequest = { infoDialogOpen = false },
@@ -249,16 +262,21 @@ fun HomeScreen() {
         )
     }
 
+    // ===== UI constants & glass style =====
     val outerPad = 28.dp
     val gap = 18.dp
     val cardRadius = 18.dp
-    val glassBg = Color(0x5A0B0F16)
-    val glassBorder = Color(0x40FFFFFF)
+
+    // “glass” lebih mirip konsep
+    val glassBg = Color(0x5C0B0F16)
+    val glassBorder = Color(0x44FFFFFF)
+
     fun glass(mod: Modifier): Modifier =
         mod.clip(RoundedCornerShape(cardRadius))
             .background(glassBg)
             .border(1.dp, glassBorder, RoundedCornerShape(cardRadius))
 
+    // bottom marquee reserve
     val marqueeHeight = 34.dp
     val marqueeBottomPadding = 14.dp
     val contentBottomPadding = marqueeHeight + marqueeBottomPadding + 10.dp
@@ -266,6 +284,7 @@ fun HomeScreen() {
     Surface(Modifier.fillMaxSize()) {
         Box(Modifier.fillMaxSize()) {
 
+            // Background + vignette
             if (!config.background.url.isNullOrBlank()) {
                 AsyncImage(
                     model = config.background.url,
@@ -276,7 +295,7 @@ fun HomeScreen() {
                 Box(
                     Modifier.fillMaxSize().background(
                         Brush.verticalGradient(
-                            colors = listOf(Color(0xAA000000), Color(0x55000000), Color(0xAA000000))
+                            colors = listOf(Color(0xAA000000), Color(0x33000000), Color(0xAA000000))
                         )
                     )
                 )
@@ -284,39 +303,47 @@ fun HomeScreen() {
                 Box(Modifier.fillMaxSize().background(Color(0xFF0B0F16)))
             }
 
+            // ===== MAIN CONTENT =====
             Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(start = outerPad, end = outerPad, top = outerPad, bottom = contentBottomPadding)
             ) {
+
+                // =========================
+                // HEADER: logo.png + "De AZKA Guest House"
+                // =========================
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = glass(Modifier).padding(horizontal = 18.dp, vertical = 14.dp)
+                        modifier = glass(Modifier)
+                            .height(66.dp)
+                            .padding(horizontal = 16.dp)
                     ) {
+                        // pakai logo.png dari drawable
                         Box(
-                            Modifier.size(54.dp)
-                                .clip(CircleShape)
-                                .background(Color(0x33000000))
-                                .border(1.dp, Color(0x55FFFFFF), CircleShape),
+                            Modifier
+                                .size(44.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Color(0x22000000))
+                                .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(10.dp)),
                             contentAlignment = Alignment.Center
                         ) {
-                            if (!config.branding.logoUrl.isNullOrBlank()) {
-                                AsyncImage(
-                                    model = config.branding.logoUrl,
-                                    contentDescription = "Logo",
-                                    modifier = Modifier.fillMaxSize().padding(8.dp),
-                                    contentScale = ContentScale.Fit
-                                )
-                            } else {
-                                Text("A", color = Color.White, fontWeight = FontWeight.Bold)
-                            }
+                            Image(
+                                painter = painterResource(id = R.drawable.logo),
+                                contentDescription = "Logo",
+                                modifier = Modifier.fillMaxSize().padding(6.dp),
+                                contentScale = ContentScale.Fit
+                            )
                         }
+
                         Spacer(Modifier.width(14.dp))
+
                         Text(
-                            text = config.branding.appTitle.ifBlank { "AzLauncher" },
+                            text = "De AZKA Guest House",
                             color = Color.White,
-                            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
+                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -331,88 +358,98 @@ fun HomeScreen() {
                             style = MaterialTheme.typography.displaySmall.copy(fontWeight = FontWeight.ExtraBold)
                         )
                         if (dateText.isNotBlank()) {
-                            Text(dateText, color = Color(0xFFE0E6EF), style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                dateText,
+                                color = Color(0xFFE0E6EF),
+                                style = MaterialTheme.typography.titleMedium
+                            )
                         }
                     }
                 }
 
                 Spacer(Modifier.height(gap))
 
-                Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(gap)) {
-                    Box(modifier = glass(Modifier.weight(1f).fillMaxHeight()).padding(18.dp)) {
+                // =========================================
+                // SLIDESHOW (16:9, hanya gambar) + WIFI (16:9)
+                // =========================================
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(gap),
+                    verticalAlignment = Alignment.Top
+                ) {
+                    // SLIDESHOW 16:9 — lebih tinggi, tidak melebar
+                    Box(
+                        modifier = glass(
+                            Modifier
+                                .weight(1.15f)
+                                .aspectRatio(16f / 9f)
+                        ).padding(14.dp)
+                    ) {
                         val current =
                             if (heroItems.isNotEmpty()) heroItems[heroIndex.coerceIn(0, heroItems.lastIndex)] else null
 
-                        Row(Modifier.fillMaxSize()) {
-                            Box(
-                                Modifier.weight(0.55f).fillMaxHeight()
-                                    .clip(RoundedCornerShape(16.dp))
-                                    .background(Color(0x22000000))
-                                    .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(16.dp))
-                            ) {
-                                if (current?.imageUrl != null) {
-                                    AsyncImage(
-                                        model = current.imageUrl,
-                                        contentDescription = "Hero",
-                                        modifier = Modifier.fillMaxSize(),
-                                        contentScale = ContentScale.Crop
-                                    )
-                                }
+                        Box(
+                            Modifier
+                                .fillMaxSize()
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(Color(0x22000000))
+                                .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(16.dp))
+                        ) {
+                            if (current?.imageUrl != null) {
+                                AsyncImage(
+                                    model = current.imageUrl,
+                                    contentDescription = "Slideshow",
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentScale = ContentScale.Crop
+                                )
                             }
+                        }
 
-                            Spacer(Modifier.width(16.dp))
-
-                            Column(Modifier.weight(0.45f).fillMaxHeight(), verticalArrangement = Arrangement.Center) {
-                                Text(
-                                    text = current?.title.orEmpty(),
-                                    color = Color.White,
-                                    style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Spacer(Modifier.height(10.dp))
-                                Text(
-                                    text = current?.subtitle.orEmpty(),
-                                    color = Color(0xFFE0E6EF),
-                                    style = MaterialTheme.typography.titleMedium,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    text = current?.note.orEmpty(),
-                                    color = Color(0xFFE0E6EF),
-                                    style = MaterialTheme.typography.titleMedium,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Spacer(Modifier.height(18.dp))
-                                if (heroItems.isNotEmpty()) {
-                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        heroItems.take(7).forEachIndexed { idx, _ ->
-                                            val active = idx == heroIndex
-                                            Box(
-                                                Modifier.size(if (active) 10.dp else 8.dp)
-                                                    .clip(CircleShape)
-                                                    .background(if (active) Color.White else Color(0x66FFFFFF))
-                                            )
-                                        }
-                                    }
+                        // dots kecil (optional, tetap halus)
+                        if (heroItems.isNotEmpty()) {
+                            Row(
+                                Modifier
+                                    .align(Alignment.BottomCenter)
+                                    .padding(bottom = 10.dp),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                heroItems.take(7).forEachIndexed { idx, _ ->
+                                    val active = idx == heroIndex
+                                    Box(
+                                        Modifier
+                                            .size(if (active) 10.dp else 8.dp)
+                                            .clip(CircleShape)
+                                            .background(if (active) Color.White else Color(0x66FFFFFF))
+                                    )
                                 }
                             }
                         }
                     }
 
-                    Box(modifier = glass(Modifier.weight(0.8f).fillMaxHeight()).padding(18.dp)) {
+                    // WIFI 16:9 — tinggi sama, lebar menyesuaikan
+                    Box(
+                        modifier = glass(
+                            Modifier
+                                .weight(0.85f)
+                                .aspectRatio(16f / 9f)
+                        ).padding(16.dp)
+                    ) {
                         Row(
                             Modifier.fillMaxSize(),
-                            horizontalArrangement = Arrangement.spacedBy(18.dp),
+                            horizontalArrangement = Arrangement.spacedBy(16.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.Center
+                            ) {
                                 Text(
                                     text = "Wi-Fi Info",
                                     color = Color.White,
-                                    style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold)
+                                    style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                                 Spacer(Modifier.height(10.dp))
                                 Text(
@@ -429,20 +466,24 @@ fun HomeScreen() {
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
-                                Spacer(Modifier.height(16.dp))
+                                Spacer(Modifier.height(14.dp))
                                 Text(
                                     text = "Scan untuk terhubung",
                                     color = Color(0xFFE0E6EF),
-                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold)
+                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
 
                             val bmp = wifiQrBitmap
                             Box(
-                                modifier = Modifier.size(210.dp)
+                                modifier = Modifier
+                                    .fillMaxHeight()
+                                    .aspectRatio(1f)
                                     .clip(RoundedCornerShape(16.dp))
                                     .background(Color.White)
-                                    .border(2.dp, Color(0x33000000), RoundedCornerShape(16.dp)),
+                                    .border(2.dp, Color(0x22000000), RoundedCornerShape(16.dp)),
                                 contentAlignment = Alignment.Center
                             ) {
                                 if (bmp != null) {
@@ -460,98 +501,149 @@ fun HomeScreen() {
 
                 Spacer(Modifier.height(gap))
 
-                if (config.appsRow.enabled) {
-                    val items = config.appsRow.items.take(5)
-                    Row(
-                        modifier = Modifier.fillMaxWidth().height(112.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        items.forEachIndexed { index, item ->
-                            AppCardItem(
-                                modifier = Modifier.weight(1f).fillMaxHeight()
-                                    .focusRequester(appFocusRequesters[index]),
-                                label = item.label,
-                                iconUrl = item.iconUrl,
-                                onClick = {
-                                    val pkg = item.packageName
-                                    when {
-                                        pkg.isBlank() -> showInfo("Aplikasi", "Package kosong.")
-                                        pkg.startsWith("__") -> showInfo("Aplikasi belum siap", "\"${item.label}\" belum dikonfigurasi.")
-                                        else -> {
-                                            val ok = launchAppByPackage(context, pkg)
-                                            if (!ok) showInfo("Aplikasi tidak tersedia", "\"${item.label}\" belum terpasang.")
-                                        }
-                                    }
-                                }
-                            )
-                        }
-                    }
-                    LaunchedEffect(Unit) { appFocusRequesters.firstOrNull()?.requestFocus() }
-                }
-
-                Spacer(Modifier.height(gap))
-
-                Box(modifier = glass(Modifier.fillMaxWidth().height(120.dp)).padding(18.dp)) {
-                    Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            Modifier.size(64.dp).clip(CircleShape).background(Color(0xFF25D366)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text("WA", color = Color.White, fontWeight = FontWeight.ExtraBold)
-                        }
-                        Spacer(Modifier.width(18.dp))
-                        Text(
-                            text = FIXED_WA_NUMBER,
-                            color = Color.White,
-                            style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.ExtraBold),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                // =========================================
+                // APP ROW (fix 5) — icon asli dari app terpasang
+                // =========================================
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(96.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    fixedApps.forEachIndexed { index, app ->
+                        AppCardItem(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .focusRequester(appFocusRequesters[index]),
+                            label = app.label,
+                            packageName = app.packageName,
+                            onClick = {
+                                val ok = launchAppByPackage(context, app.packageName)
+                                if (!ok) showInfo("Aplikasi tidak tersedia", "\"${app.label}\" belum terpasang.")
+                            }
                         )
                     }
                 }
 
-                Spacer(Modifier.height(10.dp))
-                Text(statusText, color = Color(0x88FFFFFF), style = MaterialTheme.typography.labelSmall)
-            }
+                LaunchedEffect(Unit) {
+                    appFocusRequesters.firstOrNull()?.requestFocus()
+                }
 
-            if (config.runningText.enabled) {
+                Spacer(Modifier.height(gap))
+
+                // =========================================
+                // WHATSAPP BOX — lebih “soft” seperti konsep
+                // =========================================
+                Box(
+                    modifier = glass(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(108.dp)
+                    ).padding(horizontal = 18.dp, vertical = 14.dp)
+                ) {
+                    Row(
+                        Modifier.fillMaxSize(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            Modifier
+                                .size(58.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF25D366)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "WA",
+                                color = Color.White,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                        }
+
+                        Spacer(Modifier.width(16.dp))
+
+                        Column(
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            Text(
+                                text = "WhatsApp Front Office",
+                                color = Color.White,
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = FIXED_WA_NUMBER,
+                                color = Color.White,
+                                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(10.dp))
+
                 Text(
-                    text = config.runningText.text,
-                    color = Color(0xFFFFD34D),
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                    statusText,
+                    color = Color(0x88FFFFFF),
+                    style = MaterialTheme.typography.labelSmall,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .fillMaxWidth()
-                        .padding(bottom = 14.dp)
-                        .padding(start = outerPad, end = outerPad)
+                    overflow = TextOverflow.Ellipsis
                 )
             }
+
+            // =========================================
+            // RUNNING TEXT — marquee (kanan -> kiri, loop)
+            // =========================================
+            Text(
+                text = config.runningText.text,
+                color = Color(0xFFFFD34D),
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                maxLines = 1,
+                overflow = TextOverflow.Clip,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .fillMaxWidth()
+                    .padding(bottom = marqueeBottomPadding)
+                    .padding(start = outerPad, end = outerPad)
+                    .basicMarquee(
+                        iterations = Int.MAX_VALUE,
+                        // kecepatan default ok; bisa kita tuning nanti kalau kamu minta
+                    )
+            )
         }
     }
 }
+
+private data class FixedApp(val label: String, val packageName: String)
 
 @Composable
 private fun AppCardItem(
     modifier: Modifier,
     label: String,
-    iconUrl: String?,
+    packageName: String,
     onClick: () -> Unit
 ) {
+    val context = LocalContext.current
     var focused by remember { mutableStateOf(false) }
-    val scale by animateFloatAsState(if (focused) 1.04f else 1f, label = "appCardScale")
+    val scale by animateFloatAsState(if (focused) 1.06f else 1f, label = "appCardScale")
 
-    val cardBg = if (focused) Color(0xAA111827) else Color(0x88111827)
+    val cardBg = if (focused) Color(0xB0141B28) else Color(0x80111827)
     val border = if (focused) Color(0xFFFFFFFF) else Color(0x55FFFFFF)
+    val borderW = if (focused) 3.dp else 2.dp
+
+    val iconBitmap by rememberAppIconBitmap(context, packageName)
 
     Box(
         modifier
             .scale(scale)
             .clip(RoundedCornerShape(18.dp))
             .background(cardBg)
-            .border(2.dp, border, RoundedCornerShape(18.dp))
+            .border(borderW, border, RoundedCornerShape(18.dp))
             .onFocusChanged { focused = it.isFocused }
             .focusable()
             .clickable(
@@ -559,25 +651,27 @@ private fun AppCardItem(
                 indication = null,
                 onClick = onClick
             )
-            .padding(8.dp),
+            .padding(10.dp),
         contentAlignment = Alignment.Center
     ) {
-        if (!iconUrl.isNullOrBlank()) {
+        if (iconBitmap != null) {
             Box(
-                Modifier.fillMaxHeight()
-                    .aspectRatio(2.1f)
+                Modifier
+                    .fillMaxHeight()
+                    .aspectRatio(2.2f)
                     .clip(RoundedCornerShape(14.dp))
-                    .background(Color(0x22FFFFFF)),
+                    .background(Color(0x18FFFFFF)),
                 contentAlignment = Alignment.Center
             ) {
-                AsyncImage(
-                    model = iconUrl,
+                Image(
+                    bitmap = iconBitmap!!,
                     contentDescription = label,
-                    modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 10.dp),
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 10.dp),
                     contentScale = ContentScale.Fit
                 )
             }
         } else {
+            // fallback kalau app belum terpasang
             Text(
                 text = label,
                 color = Color.White,
@@ -587,6 +681,33 @@ private fun AppCardItem(
             )
         }
     }
+}
+
+@Composable
+private fun rememberAppIconBitmap(context: Context, packageName: String): State<ImageBitmap?> {
+    val state = remember(packageName) { mutableStateOf<ImageBitmap?>(null) }
+
+    LaunchedEffect(packageName) {
+        state.value = withContext(Dispatchers.Default) {
+            runCatching {
+                val pm = context.packageManager
+                val drawable = pm.getApplicationIcon(packageName)
+                drawableToBitmap(drawable, 512, 512).asImageBitmap()
+            }.getOrNull()
+        }
+    }
+    return state
+}
+
+private fun drawableToBitmap(drawable: Drawable, width: Int, height: Int): Bitmap {
+    if (drawable is BitmapDrawable && drawable.bitmap != null) {
+        return Bitmap.createScaledBitmap(drawable.bitmap, width, height, true)
+    }
+    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    drawable.setBounds(0, 0, canvas.width, canvas.height)
+    drawable.draw(canvas)
+    return bitmap
 }
 
 @Composable
@@ -678,4 +799,14 @@ private fun generateQrBitmap(text: String, sizePx: Int): Bitmap {
         }
     }
     return bmp
+}
+
+/**
+ * Back handling / kiosk behavior tetap ada di Activity (bukan di sini).
+ * Di HomeScreen, kita fokus UI saja.
+ */
+object AdminGate {
+    var show by mutableStateOf(false)
+    fun open() { show = true }
+    fun close() { show = false }
 }
