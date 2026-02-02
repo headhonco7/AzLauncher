@@ -1,21 +1,34 @@
 package com.azka.launcher.data.model
 
 /**
- * Config v1 (ringan) yang cukup untuk men-drive UI mock.
- * Parsing toleran: field boleh hilang -> pakai default aman.
+ * Prinsip final:
+ * - Layout & komponen bersifat FIX (tidak update dari config),
+ * - Kecuali yang diperbolehkan: wallpaper, wifi ssid+pass, hero items, runningText.
+ *
+ * Catatan:
+ * Data model masih menyimpan banyak field untuk kompatibilitas, tapi parser akan mengabaikannya.
  */
 data class RemoteConfig(
     val schemaVersion: Int = 1,
+
     val branding: Branding = Branding(),
     val background: Background = Background(),
+
     val topRight: TopRight = TopRight(),
+
     val hero: Hero = Hero(),
+
     val roomLabel: RoomLabel = RoomLabel(),
+
     val contact: Contact = Contact(),
+
     val wifiCard: WifiCard = WifiCard(),
+
     val appsRow: AppsRow = AppsRow(),
+
     val runningText: RunningText = RunningText()
 ) {
+
     data class Branding(
         val appTitle: String = "AzLauncher",
         val logoUrl: String? = null
@@ -32,24 +45,29 @@ data class RemoteConfig(
     ) {
         data class Clock(
             val enabled: Boolean = true,
-            val format24h: Boolean = true
+            val format24h: Boolean = true,
+            val showDate: Boolean = true,
+            val dateLocale: String = "id"
         )
 
         data class Weather(
-            val enabled: Boolean = true,
+            val enabled: Boolean = false,
             val mode: String = "static_text",
-            val text: String = "Sunny • 28°C"
+            val text: String = ""
         )
     }
 
     data class Hero(
         val enabled: Boolean = true,
         val autoSlide: Boolean = true,
-        val intervalMs: Long = 8000L,
+        val intervalMs: Long = 10_000L, // FIX 8–12 detik range nanti di UI
         val items: List<HeroItem> = emptyList()
     ) {
         data class HeroItem(
             val imageUrl: String? = null,
+            val title: String = "",
+            val subtitle: String = "",
+            val note: String = "",
             val action: Action = Action()
         ) {
             data class Action(
@@ -68,43 +86,46 @@ data class RemoteConfig(
 
     data class Contact(
         val enabled: Boolean = true,
-        val whatsappFoText: String = "WhatsApp FO",
-        val whatsappNumber: String = "+62812XXXXXXX",
-        val socialText: String = "Akun Sosmed",
-        val socialHandle: String = "@guesthouse"
+        val whatsappFoText: String = "WhatsApp Front Office",
+        // FIX sesuai permintaan user (tidak akan diambil dari config)
+        val whatsappNumber: String = "0851 22000 590",
+        val whatsappNote: String = "",
+        val socialText: String = "",
+        val socialHandle: String = ""
     )
 
     data class WifiCard(
         val enabled: Boolean = true,
-        val title: String = "WiFi",
-        val ssid: String = "AZ-GUEST",
-        val password: String = "az12345",
+        val title: String = "Wi-Fi Info",
+        val ssid: String = "HotelWifi",
+        val password: String = "12345678",
         val encryption: String = "WPA",
-        val showQr: Boolean = true
+        val showQr: Boolean = true,
+        val hintText: String = "Scan untuk terhubung"
     )
 
     data class AppsRow(
         val enabled: Boolean = true,
         val title: String = "Apps",
+        // FIX 5 item: Netflix, YouTube, IPTV1, IPTV2, Cast
         val items: List<AppItem> = listOf(
-            // ✅ Urutan 5 ikon sesuai request
-            AppItem(id = "netflix", label = "Netflix", packageName = "com.netflix.ninja"),
-            AppItem(id = "youtube", label = "YouTube", packageName = "com.google.android.youtube.tv"),
-            AppItem(id = "iptv", label = "IPTV", packageName = "__IPTV_PACKAGE__"),
-            AppItem(id = "youtubekids", label = "YouTube Kids", packageName = "__YOUTUBE_KIDS_PACKAGE__"),
-            AppItem(id = "cast", label = "Cast", packageName = "__CAST_PACKAGE__")
+            AppItem(id = "netflix", label = "Netflix", packageName = "com.netflix.ninja", iconUrl = null),
+            AppItem(id = "youtube", label = "YouTube", packageName = "com.google.android.youtube.tv", iconUrl = null),
+            AppItem(id = "iptv1", label = "IPTV 1", packageName = "__IPTV_1__", iconUrl = null),
+            AppItem(id = "iptv2", label = "IPTV 2", packageName = "__IPTV_2__", iconUrl = null),
+            AppItem(id = "cast", label = "Cast", packageName = "com.google.android.gms.cast", iconUrl = null)
         )
     ) {
         data class AppItem(
             val id: String,
             val label: String,
             val packageName: String,
-            val iconUrl: String? = null
+            val iconUrl: String?
         )
     }
 
     data class RunningText(
         val enabled: Boolean = true,
-        val text: String = "Selamat datang • Check-out pukul 12.00 • Hubungi FO via WhatsApp"
+        val text: String = "• Check-out pukul 12.00 • Water refill tersedia di lobby • Hubungi FO via WhatsApp"
     )
 }
